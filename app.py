@@ -1,4 +1,4 @@
-# app_top20_tiles.py — Top 20 Tiles (CF) with fixed image, colored role tags, flag images
+# app_top20_tiles.py — Top 20 Tiles (CF) with fixed image, colored role tags, emoji flags
 # Requirements: streamlit, pandas, numpy
 
 import io
@@ -6,7 +6,6 @@ import re
 import math
 import unicodedata
 from pathlib import Path
-import html
 
 import streamlit as st
 import pandas as pd
@@ -17,7 +16,7 @@ st.set_page_config(page_title="Advanced Striker Scouting — Top 20 Tiles", layo
 st.title("🔎 Advanced Striker Scouting — Top 20 Tiles")
 st.caption(
     "Ranked by ‘All in’ (league-weighted). Pills show Goal Threat, Link-Up CF, Target Man CF. "
-    "Pool = Position starts with CF. Flag = Birth country (image). No team badges."
+    "Pool = Position starts with CF. Flag = Birth country. No team badges."
 )
 
 # ----------------- STYLE -----------------
@@ -26,17 +25,14 @@ st.markdown(
     <style>
       :root { --bg: #0f1115; --card: #161a22; --muted: #a8b3cf; --soft: #202633; }
       .block-container { padding-top: 0.8rem; }
-      body {
-        background-color: var(--bg);
-        font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      }
+      body { background-color: var(--bg); font-family: system-ui, -apple-system, "Segoe UI", "Segoe UI Emoji", Roboto, Helvetica, Arial, sans-serif; }
       .wrap { display:flex; justify-content:center; }
       .player-card {
         width:min(420px, 96%);
         display:grid;
         grid-template-columns: 96px 1fr 48px; /* photo | content | rank */
         gap:12px;
-        align-items:flex-start;
+        align-items:center;
         background:var(--card);
         border:1px solid #252b3a;
         border-radius:18px;
@@ -46,36 +42,18 @@ st.markdown(
         width:96px; height:96px; border-radius:12px;
         background:#0b0d12 url('https://i.redd.it/43axcjdu59nd1.jpeg') center/cover no-repeat;
         border:1px solid #2a3145;
-        margin-top:2px;
       }
       .leftcol { display:flex; flex-direction:column; align-items:center; gap:8px; }
-      .meta3 {
-        display:grid;
-        grid-template-columns: repeat(3, max-content);
-        gap:8px; align-items:center; justify-items:center;
-      }
-      .flagchip {
-        background:var(--soft); border:1px solid #2d3550; border-radius:10px;
-        padding:2px 8px; min-width:46px; display:flex; align-items:center; justify-content:center;
-        height:24px;
-      }
-      .flagchip img { display:block; width:24px; height:18px; border-radius:3px; }
+      .meta3 { display:grid; grid-template-columns: repeat(3, max-content); gap:8px; align-items:center; }
+      .name { font-weight:800; font-size:22px; color:#e8ecff; margin-bottom:6px; }
+      .sub { color:#a8b3cf; font-size:15px; }
+      .pill { padding:2px 10px; border-radius:9px; font-weight:800; font-size:18px; color:#0b0d12; display:inline-block; min-width:42px; text-align:center; }
+      .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:4px 0; }
       .chip {
         background:var(--soft); color:#cbd5f5; border:1px solid #2d3550;
         padding:3px 10px; border-radius:10px; font-size:13px; line-height:18px;
-        min-width:52px; text-align:center;
       }
-      .name { font-weight:800; font-size:22px; color:#e8ecff; margin-bottom:6px; }
-      .sub { color:#a8b3cf; font-size:15px; }
-      .pill {
-        padding:2px 10px; border-radius:9px; font-weight:800; font-size:18px;
-        color:#0b0d12; display:inline-block; min-width:42px; text-align:center;
-      }
-      .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:4px 0; }
-      .pos {
-        color:#eaf0ff; font-weight:700; padding:4px 10px; border-radius:10px;
-        font-size:12px; border:1px solid rgba(255,255,255,0.08);
-      }
+      .pos { color:#eaf0ff; font-weight:700; padding:4px 10px; border-radius:10px; font-size:12px; border:1px solid rgba(255,255,255,0.08); }
       .teamline { color:#e6ebff; font-size:15px; font-weight:400; margin-top:2px; }
       .rank { color:#94a0c6; font-weight:800; font-size:18px; text-align:right; }
       .divider { height:12px; }
@@ -85,6 +63,8 @@ st.markdown(
 )
 
 # ----------------- CONFIG -----------------
+FALLBACK_URL = "https://i.redd.it/43axcjdu59nd1.jpeg"
+
 INCLUDED_LEAGUES = [
     'England 1.', 'England 2.', 'England 3.', 'England 4.', 'England 5.',
     'England 6.', 'England 7.', 'England 8.', 'England 9.', 'England 10.',
@@ -125,8 +105,8 @@ ROLES = {
     'Goal Threat CF': {
         'desc': "High shot & xG volume, box presence, consistent SoT and finishing.",
         'metrics': {
-            'Non-penalty goals per 90': 3,'Shots per 90': 1.5,'xG per 90': 3,
-            'Touches in box per 90': 1,'Shots on target, %': 0.5
+            'Non-penalty goals per 90': 3, 'Shots per 90': 1.5, 'xG per 90': 3,
+            'Touches in box per 90': 1, 'Shots on target, %': 0.5
         }
     },
     'Link-Up CF': {
@@ -141,11 +121,14 @@ ROLES = {
     },
     'Target Man CF': {
         'desc': "Aerial presence & duel dominance for a focal point game.",
-        'metrics': { 'Aerial duels won, %': 4, 'Aerial duels per 90': 3 }
+        'metrics': {
+            'Aerial duels won, %': 4,
+            'Aerial duels per 90': 3,
+        }
     },
     'All in': {
         'desc': "Blend of creation + scoring; balanced all-round attacking profile.",
-        'metrics': {'xA per 90': 2, 'Dribbles per 90': 2, 'xG per 90': 3, 'Non-penalty goals per 90': 3}
+        'metrics': { 'xA per 90': 2, 'Dribbles per 90': 2, 'xG per 90': 3, 'Non-penalty goals per 90': 3 }
     }
 }
 
@@ -218,6 +201,7 @@ with st.sidebar:
     default_sel = PRESETS[preset]
     leagues_sel = st.multiselect("Leagues", leagues_avail, default=default_sel)
 
+    # β applies to all role scores and ranking
     beta = st.slider("League weighting beta (applies to all scores)", 0.0, 1.0, 0.40, 0.05)
 
     df["Minutes played"] = pd.to_numeric(df["Minutes played"], errors="coerce")
@@ -273,9 +257,10 @@ df_f = df_f.dropna(subset=FEATURES)
 df_f["League Strength"] = df_f["League"].map(LEAGUE_STRENGTHS).fillna(50.0)
 df_f = df_f[(df_f["League Strength"] >= float(min_strength)) & (df_f["League Strength"] <= float(max_strength))]
 df_f = df_f[(df_f["Market value"] >= min_value) & (df_f["Market value"] <= max_value)]
+
 if df_f.empty:
     st.warning("No players after filters. Loosen filters.")
-    st.stop()
+    st.stop()  # prevents NameError later
 
 # ----------------- Percentiles per league -----------------
 for feat in FEATURES:
@@ -345,41 +330,47 @@ POS_COLORS = {
 def chip_color(pos_code: str) -> str:
     return POS_COLORS.get(pos_code.strip().upper(), "#2d3550")
 
-# --- Birth country → flag image chip ---
-COUNTRY_TO_CC = {
-    "england":"gb","scotland":"gb","wales":"gb","northern ireland":"gb",
-    "united kingdom":"gb","great britain":"gb","gb-eng":"gb","gb-sct":"gb","gb-wls":"gb","gb-nir":"gb",
-    # Europe
-    "ireland":"ie","republic of ireland":"ie","spain":"es","france":"fr","germany":"de","italy":"it","portugal":"pt",
-    "netherlands":"nl","belgium":"be","austria":"at","switzerland":"ch","denmark":"dk","sweden":"se","norway":"no",
-    "croatia":"hr","serbia":"rs","bosnia and herzegovina":"ba","slovenia":"si","slovakia":"sk","czech republic":"cz","czechia":"cz",
-    "poland":"pl","romania":"ro","bulgaria":"bg","greece":"gr","hungary":"hu","iceland":"is","finland":"fi",
-    "estonia":"ee","latvia":"lv","lithuania":"lt","moldova":"md","armenia":"am","azerbaijan":"az","georgia":"ge",
-    "north macedonia":"mk","andorra":"ad","albania":"al","malta":"mt","cyprus":"cy","luxembourg":"lu","monaco":"mc",
-    "san marino":"sm","montenegro":"me","kosovo":"xk","ukraine":"ua","russia":"ru","belarus":"by",
-    # Americas
-    "brazil":"br","argentina":"ar","uruguay":"uy","chile":"cl","colombia":"co","peru":"pe","mexico":"mx","paraguay":"py",
-    "venezuela":"ve","ecuador":"ec","bolivia":"bo","canada":"ca","united states":"us","usa":"us","costa rica":"cr",
-    # Africa
-    "algeria":"dz","morocco":"ma","tunisia":"tn","nigeria":"ng","ghana":"gh","egypt":"eg","ivory coast":"ci","cote d'ivoire":"ci",
-    "senegal":"sn","south africa":"za","cameroon":"cm","mali":"ml","guinea":"gn","burkina faso":"bf","gambia":"gm",
-    # Asia & Oceania
-    "japan":"jp","korea":"kr","south korea":"kr","republic of korea":"kr","north korea":"kp",
-    "china":"cn","australia":"au","new zealand":"nz","qatar":"qa","saudi arabia":"sa","iran":"ir","iraq":"iq","israel":"il",
-    "kazakhstan":"kz","uzbekistan":"uz","uae":"ae","united arab emirates":"ae"
+# Flags from Birth country → emoji (includes GB subdivisions where possible)
+# England/Scotland/Wales have emoji; Northern Ireland does not → 🇬🇧 as fallback.
+SUBDIV_FLAGS = {
+    "england": "🏴",   # U+1F3F4 + tag seq for 'eng'
+    "scotland": "🏴",  # 'sct'
+    "wales": "🏴",     # 'wls'
+    "great britain": "🇬🇧", "united kingdom": "🇬🇧", "uk": "🇬🇧", "gb": "🇬🇧",
+    "northern ireland": "🇬🇧",  # no dedicated emoji
 }
-def to_cc(country: str) -> str | None:
-    if not country: return None
-    n = unicodedata.normalize("NFKD", str(country).strip().lower()).encode("ascii","ignore").decode("ascii")
-    if len(n) == 2 and n.isalpha():  # already ISO-2
-        return n.lower()
-    return COUNTRY_TO_CC.get(n)
+# Country name → ISO alpha-2 (for standard regional-indicator flags)
+COUNTRY_TO_CC = {
+    "republic of ireland":"IE","ireland":"IE","spain":"ES","france":"FR","germany":"DE","italy":"IT","portugal":"PT",
+    "netherlands":"NL","belgium":"BE","austria":"AT","switzerland":"CH","denmark":"DK","sweden":"SE","norway":"NO",
+    "croatia":"HR","serbia":"RS","bosnia and herzegovina":"BA","slovenia":"SI","slovakia":"SK","czech republic":"CZ","czechia":"CZ",
+    "poland":"PL","romania":"RO","bulgaria":"BG","greece":"GR","hungary":"HU","turkey":"TR",
+    "brazil":"BR","argentina":"AR","uruguay":"UY","chile":"CL","colombia":"CO","peru":"PE","mexico":"MX",
+    "united states":"US","usa":"US","canada":"CA","russia":"RU","ukraine":"UA","georgia":"GE","kazakhstan":"KZ",
+    "japan":"JP","korea":"KR","south korea":"KR","china":"CN",
+    "australia":"AU","new zealand":"NZ",
+    "algeria":"DZ","morocco":"MA","tunisia":"TN","nigeria":"NG","ghana":"GH","egypt":"EG","ivory coast":"CI","cote d'ivoire":"CI","senegal":"SN",
+    "paraguay":"PY","venezuela":"VE","ecuador":"EC","bolivia":"BO","qatar":"QA","saudi arabia":"SA","iran":"IR","iraq":"IQ","israel":"IL","iceland":"IS","finland":"FI","estonia":"EE","latvia":"LV","lithuania":"LT","moldova":"MD","armenia":"AM","azerbaijan":"AZ","north macedonia":"MK","andorra":"AD","albania":"AL","malta":"MT","cyprus":"CY","luxembourg":"LU","monaco":"MC","san marino":"SM","montenegro":"ME","kosovo":"XK","uruguay":"UY","uae":"AE","united arab emirates":"AE","south africa":"ZA"
+}
 
-def flag_img(country: str) -> str:
-    cc = to_cc(country)
-    if not cc: return "—"
-    # Fast, free flag CDN (no attribution needed): 24x18 PNG
-    return f"<img src='https://flagcdn.com/24x18/{cc}.png' alt='{html.escape(country)}' width='24' height='18'/>"
+def flag_emoji(country_name: str) -> str:
+    n = (country_name or "").strip()
+    if not n:
+        return ""
+    n_l = n.lower()
+    # GB subdivisions first
+    if n_l in SUBDIV_FLAGS:
+        return SUBDIV_FLAGS[n_l]
+    # normalize accents/punct
+    n_norm = unicodedata.normalize("NFKD", n_l).encode("ascii", "ignore").decode("ascii")
+    if n_norm in SUBDIV_FLAGS:
+        return SUBDIV_FLAGS[n_norm]
+    # regular country
+    cc = COUNTRY_TO_CC.get(n_l) or COUNTRY_TO_CC.get(n_norm)
+    if not cc or len(cc) != 2:
+        return ""  # unknown → show nothing
+    base = 127397
+    return chr(base + ord(cc[0].upper())) + chr(base + ord(cc[1].upper()))
 
 # ----------------- RENDER -----------------
 for idx, row in ranked.iterrows():
@@ -388,43 +379,47 @@ for idx, row in ranked.iterrows():
     team = str(row.get("Team", "")) or ""
     pos_full = str(row.get("Position", "")) or ""
     age = int(row.get("Age", 0)) if not pd.isna(row.get("Age", np.nan)) else 0
-    cexp = pd.to_datetime(row.get("Contract expires"), errors="coerce")
-    contract_year = int(cexp.year) if not pd.isna(cexp) else 0
+    contract_year = int(pd.to_datetime(row.get("Contract expires"), errors="coerce").year) if pd.notna(row.get("Contract expires")) else 0
 
     gt_i = int(round(float(row["Score_GT"])))
     lu_i = int(round(float(row["Score_LU"])))
     tm_i = int(round(float(row["Score_TM"])))
 
-    # Position chips: keep CF first if present
+    # flag from Birth country
+    birth_country = str(row.get("Birth country", "") or "")
+    flag = flag_emoji(birth_country)
+
+    # Position chips (keep CF first if present)
     raw_codes = re.split(r"[,/; ]+", pos_full.strip().upper())
     codes = [c for c in raw_codes if c]
     if "CF" in codes:
         codes = ["CF"] + [c for c in codes if c != "CF"]
     chips_html = ""
-    shown = set()
+    seen = set()
     for c in codes:
-        if c in shown: continue
-        shown.add(c)
-        chips_html += f"<span class='pos' style='background:{chip_color(c)}'>{html.escape(c)}</span> "
+        if c in seen: 
+            continue
+        seen.add(c)
+        chips_html += f"<span class='pos' style='background:{chip_color(c)}'>{c}</span> "
 
     gt_style = f"background:{rating_color(gt_i)};"
     lu_style = f"background:{rating_color(lu_i)};"
     tm_style = f"background:{rating_color(tm_i)};"
+
+    # Left column meta (flag • age • contract) aligned in one row
+    flag_chip = f"<span class='chip'>{flag}</span>" if flag else "<span class='chip'>—</span>"
+    age_chip = f"<span class='chip'>{age}y.o.</span>"
+    cy_chip  = f"<span class='chip'>{contract_year if contract_year>0 else '—'}</span>"
 
     st.markdown(f"""
     <div class='wrap'>
       <div class='player-card'>
         <div class='leftcol'>
           <div class='avatar'></div>
-          <div class='meta3'>
-            <span class='flagchip'>{flag_img(row.get("Birth country", ""))}</span>
-            <span class='chip'>{age}y.o.</span>
-            <span class='chip'>{contract_year if contract_year>0 else '—'}</span>
-          </div>
+          <div class='meta3'>{flag_chip}{age_chip}{cy_chip}</div>
         </div>
-
         <div>
-          <div class='name'>{html.escape(player)}</div>
+          <div class='name'>{player}</div>
 
           <div class='row' style='align-items:center;'>
             <span class='pill' style='{gt_style}'>{gt_i}</span>
@@ -440,14 +435,14 @@ for idx, row in ranked.iterrows():
           </div>
 
           <div class='row'>{chips_html}</div>
-          <div class='teamline'>{html.escape(team)}</div>
+          <div class='teamline'>{team}</div>
         </div>
-
         <div class='rank'>#{rank}</div>
       </div>
     </div>
     <div class='divider'></div>
     """, unsafe_allow_html=True)
+
 
 
 
