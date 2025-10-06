@@ -34,7 +34,7 @@ st.markdown(
     .chip { background:var(--soft); color:#cbd5f5; border:1px solid #2d3550; padding:3px 10px; border-radius:9px; font-size:13px; }
     .leftcol { display:flex; flex-direction:column; align-items:center; gap:8px; }
     .divider { height:12px; }
-    .teamline { color:#e6ebff; font-size:16px; font-weight:500; margin-top:2px; }
+    .teamline { color:#e6ebff; font-size:15px; font-weight:400; margin-top:2px; }
 </style>
     """,
     unsafe_allow_html=True,
@@ -261,7 +261,7 @@ df_f["Contract Year"] = pd.to_datetime(df_f["Contract expires"], errors="coerce"
 ranked = df_f.sort_values("Overall Rating", ascending=False).head(int(top_n)).copy().reset_index(drop=True)
 
 # ----------------- Image helper -----------------
-FALLBACK_URL = "https://i.redd.it/43axcjdu59nd1.jpeg"
+FALLBACK_URL = "https://preview.redd.it/is-it-only-me-that-is-against-signing-players-with-no-v0-43axcjdu59nd1.jpeg?auto=webp&s=a0cea2c5a1cb083911f3c776d096581974ab91ce"
 
 def guess_fotmob_url(team: str, player: str) -> str:
     def slug(x):
