@@ -365,14 +365,18 @@ def flag_emoji(country_name: str) -> str:
     base = 127397
     return chr(base + ord(cc[0])) + chr(base + ord(cc[1]))
 
+from textwrap import dedent
+import html
+
 # ----------------- RENDER -----------------
 for idx, row in ranked.iterrows():
     rank = idx + 1
-    player = str(row.get("Player", "")) or ""
-    team = str(row.get("Team", "")) or ""
+    player = html.escape(str(row.get("Player", "") or ""))
+    team = html.escape(str(row.get("Team", "") or ""))
     pos_full = str(row.get("Position", "")) or ""
     age = int(row.get("Age", 0)) if not pd.isna(row.get("Age", np.nan)) else 0
-    contract_year = int(pd.to_datetime(row.get("Contract expires"), errors="coerce").year) if pd.notna(row.get("Contract expires")) else 0
+    ce = pd.to_datetime(row.get("Contract expires"), errors="coerce")
+    contract_year = int(ce.year) if pd.notna(ce) else 0
 
     gt_i = int(round(float(row["Score_GT"])))
     lu_i = int(round(float(row["Score_LU"])))
@@ -381,62 +385,64 @@ for idx, row in ranked.iterrows():
     birth_country = str(row.get("Birth country", "") or "")
     flag = flag_emoji(birth_country)
 
-    # Position chips (show CF first if present)
+    # positions → colored chips (CF first if present)
     raw_codes = re.split(r"[,/; ]+", pos_full.strip().upper())
     codes = [c for c in raw_codes if c]
     if "CF" in codes:
         codes = ["CF"] + [c for c in codes if c != "CF"]
     chips_html = ""
-    shown = set()
+    seen = set()
     for c in codes:
-        if c in shown: 
+        if c in seen:
             continue
-        shown.add(c)
-        color = chip_color(c)
-        chips_html += f"<span class='pos' style='background:{color}'>{c}</span> "
+        seen.add(c)
+        chips_html += f"<span class='pos' style='background:{chip_color(c)}'>{html.escape(c)}</span> "
 
-    def pill_style(v: int) -> str:
+    def pill(v: int) -> str:
         return f"background:{rating_color(v)};"
 
-    st.markdown(f"""
+    card_html = dedent(f"""
     <div class='wrap'>
-      <div class='player-card'>
-        <div class='leftcol'>
-          <div class='avatar'></div>
-          <div class='row'>
-            <span class='chip'>{flag if flag else '—'}</span>
-            <span class='chip'>{age}y.o.</span>
-          </div>
-          <div class='row'>
-            <span class='chip'>{contract_year if contract_year>0 else '—'}</span>
-          </div>
-        </div>
+    <div class='player-card'>
+    <div class='leftcol'>
+    <div class='avatar'></div>
+    <div class='row'>
+    <span class='chip'>{flag if flag else '—'}</span>
+    <span class='chip'>{age}y.o.</span>
+    </div>
+    <div class='row'>
+    <span class='chip'>{contract_year if contract_year>0 else '—'}</span>
+    </div>
+    </div>
 
-        <div>
-          <div class='name'>{player}</div>
+    <div>
+    <div class='name'>{player}</div>
 
-          <div class='row' style="align-items:center;">
-            <span class='pill' style='{pill_style(gt_i)}'>{gt_i}</span>
-            <span class='sub'>Goal Threat</span>
-          </div>
-          <div class='row' style="align-items:center;">
-            <span class='pill' style='{pill_style(lu_i)}'>{lu_i}</span>
-            <span class='sub'>Link-Up CF</span>
-          </div>
-          <div class='row' style="align-items:center;">
-            <span class='pill' style='{pill_style(tm_i)}'>{tm_i}</span>
-            <span class='sub'>Target Man CF</span>
-          </div>
+    <div class='row' style="align-items:center;">
+    <span class='pill' style='{pill(gt_i)}'>{gt_i}</span>
+    <span class='sub'>Goal Threat</span>
+    </div>
 
-          <div class='row'>{chips_html}</div>
-          <div class='teamline'>{team}</div>
-        </div>
+    <div class='row' style="align-items:center;">
+    <span class='pill' style='{pill(lu_i)}'>{lu_i}</span>
+    <span class='sub'>Link-Up CF</span>
+    </div>
 
-        <div class='rank'>#{rank}</div>
-      </div>
+    <div class='row' style="align-items:center;">
+    <span class='pill' style='{pill(tm_i)}'>{tm_i}</span>
+    <span class='sub'>Target Man CF</span>
+    </div>
+
+    <div class='row'>{chips_html}</div>
+    <div class='teamline'>{team}</div>
+    </div>
+
+    <div class='rank'>#{rank}</div>
+    </div>
     </div>
     <div class='divider'></div>
-    """, unsafe_allow_html=True)
+    """)
+    st.markdown(card_html, unsafe_allow_html=True)
 
 
 
