@@ -1,7 +1,6 @@
-# app_top20_tiles.py — Top 20 Tiles View (dark, compact)
-# Drop-in single file. Requirements: streamlit, pandas, numpy, matplotlib.
-# Uses your WORLDJUNE25.csv (same columns as your previous app) and renders
-# top-20 CFs as separated dark tiles similar to the provided mock.
+# app_top20_tiles.py — Top 20 Tiles View (compact + taller)
+# Requirements: streamlit, pandas, numpy.
+# Combines both roles into a single scoring system and renders dark tiles.
 
 import os
 import math
@@ -15,26 +14,27 @@ import numpy as np
 
 st.set_page_config(page_title="Advanced Striker Scouting – Top 20 Tiles", layout="wide")
 st.title("🔎 Advanced Striker Scouting – Top 20 Tiles")
-st.caption("Ranked by overall (best role score with league-quality weighting). Potential adds an age-based bump.")
+st.caption("Overall = league-weighted combined-role score. Potential = Overall + age bonus.")
 
 # ----------------- STYLE -----------------
 st.markdown(
     """
     <style>
-    :root { --bg: #0f1115; --card: #171a21; --muted: #a8b3cf; --soft: #222736; --pill: #243b1a; --pillText:#c6f6c6; }
-    .block-container { padding-top: 1.0rem; }
+    :root { --bg: #0f1115; --card: #161a22; --muted: #a8b3cf; --soft: #202633; }
+    .block-container { padding-top: 0.8rem; }
     body { background-color: var(--bg); }
-    .player-card { display:flex; gap:14px; align-items:center; background:var(--card); border:1px solid #252b3a; border-radius:14px; padding:12px; }
-    .avatar { width:72px; height:72px; border-radius:10px; object-fit:cover; background:#0b0d12; border:1px solid #2a3145; }
-    .name { font-weight:700; font-size:20px; color:#e8ecff; }
+    .wrap { display:flex; justify-content:center; }
+    .player-card { width:min(880px, 96%); display:grid; grid-template-columns: 96px 1fr; gap:14px; align-items:center; background:var(--card); border:1px solid #252b3a; border-radius:18px; padding:16px; }
+    .avatar { width:96px; height:96px; border-radius:12px; object-fit:cover; background:#0b0d12; border:1px solid #2a3145; }
+    .name { font-weight:800; font-size:21px; color:#e8ecff; }
     .sub { color:var(--muted); font-size:13px; }
-    .pill { background:#264d1d; color:#d7ffd7; padding:2px 10px; border-radius:8px; font-weight:700; font-size:16px; }
-    .pill-gray { background:#2b3247; color:#d7dcf0; padding:2px 10px; border-radius:8px; font-weight:700; font-size:16px; }
+    .pill { padding:3px 10px; border-radius:9px; font-weight:800; font-size:16px; color:#0b0d12; }
+    .pill-gray { background:#2b3247; color:#d7dcf0; padding:3px 10px; border-radius:9px; font-weight:700; font-size:16px; }
     .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-    .rank { color:#94a0c6; font-weight:700; font-size:18px; width:36px; text-align:right; }
-    .club { display:flex; gap:8px; align-items:center; }
-    .chip { background:var(--soft); color:#cbd5f5; border:1px solid #2d3550; padding:2px 8px; border-radius:8px; font-size:12px; }
-    .divider { height:10px; }
+    .rank { color:#94a0c6; font-weight:800; font-size:18px; margin-right:8px; }
+    .chip { background:var(--soft); color:#cbd5f5; border:1px solid #2d3550; padding:3px 10px; border-radius:9px; font-size:12px; }
+    .leftcol { display:flex; flex-direction:column; align-items:center; gap:8px; }
+    .divider { height:12px; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -78,12 +78,10 @@ FEATURES = [
 
 ROLES = {
     'Goal Threat CF': {
-        'desc': "High shot & xG volume, box presence, consistent SoT and finishing.",
         'metrics': {'Non-penalty goals per 90': 3,'Shots per 90': 1.5,'xG per 90': 3,
                     'Touches in box per 90': 1,'Shots on target, %': 0.5}
     },
     'Link-Up CF': {
-        'desc': "Combine & create; link play; progress & deliver to the penalty area.",
         'metrics': {'Passes per 90': 2, 'Passes to penalty area per 90': 1.5,
                     'Deep completions per 90': 1, 'Smart passes per 90': 1.5,
                     'Accurate passes, %': 1.5, 'Key passes per 90': 1,
@@ -91,6 +89,12 @@ ROLES = {
                     'Progressive runs per 90': 2, 'xA per 90': 3}
     },
 }
+
+# Combine both roles into ONE metric (sum weights; overlapping metrics add up)
+COMBINED_METRICS = {}
+for r in ROLES.values():
+    for k, w in r['metrics'].items():
+        COMBINED_METRICS[k] = COMBINED_METRICS.get(k, 0) + w
 
 LEAGUE_STRENGTHS = {
     'England 1.':100.00,'Italy 1.':97.14,'Spain 1.':94.29,'Germany 1.':94.29,'France 1.':91.43,
@@ -120,7 +124,6 @@ LEAGUE_STRENGTHS = {
 
 REQUIRED_BASE = {"Player","Team","League","Age","Position","Minutes played","Market value","Contract expires","Goals"}
 
-# -------- Position filter (CF only) --------
 CF_PREFIXES = ('CF',)
 
 def position_filter(pos):
@@ -160,7 +163,6 @@ with st.sidebar:
     leagues_avail = sorted(set(INCLUDED_LEAGUES) | set(df.get("League", pd.Series([])).dropna().unique()))
     leagues_sel = st.multiselect("Leagues", leagues_avail, default=INCLUDED_LEAGUES)
 
-    # numeric coercions
     df["Minutes played"] = pd.to_numeric(df["Minutes played"], errors="coerce")
     df["Age"] = pd.to_numeric(df["Age"], errors="coerce")
     min_minutes, max_minutes = st.slider("Minutes played", 0, 5000, (500, 5000))
@@ -189,7 +191,7 @@ with st.sidebar:
         min_value, max_value = st.slider("Range (€)", 0, mv_cap, (0, mv_cap), step=100_000)
 
     min_strength, max_strength = st.slider("League quality (strength)", 0, 101, (0, 101))
-    beta = st.slider("League weighting beta (for OVERALL only)", 0.0, 1.0, 0.40, 0.05)
+    beta = st.slider("League weighting beta (for OVERALL)", 0.0, 1.0, 0.40, 0.05)
 
     top_n = st.number_input("How many tiles", 5, 100, 20, 5)
 
@@ -210,7 +212,6 @@ df_f = df_f[df_f["Minutes played"].between(min_minutes, max_minutes)]
 df_f = df_f[df_f["Age"].between(min_age, max_age)]
 if apply_contract:
     df_f = df_f[df_f["Contract expires"].dt.year <= cutoff_year]
-
 for c in FEATURES:
     df_f[c] = pd.to_numeric(df_f[c], errors="coerce")
 
@@ -228,59 +229,61 @@ if df_f.empty:
 for feat in FEATURES:
     df_f[f"{feat} Percentile"] = df_f.groupby("League")[feat].transform(lambda x: x.rank(pct=True) * 100.0)
 
-# ----------------- Role scores -----------------
-def compute_weighted_role_score(df_in: pd.DataFrame, metrics: dict) -> pd.Series:
+# ----------------- Combined role score -----------------
+def combined_role_score(df_in: pd.DataFrame, metrics: dict) -> pd.Series:
     total_w = sum(metrics.values()) if metrics else 1.0
     wsum = np.zeros(len(df_in))
     for m, w in metrics.items():
         col = f"{m} Percentile"
         if col in df_in.columns:
             wsum += df_in[col].values * w
-    return wsum / total_w  # 0..100
+    return wsum / total_w
 
-for role_name, role_def in ROLES.items():
-    df_f[f"{role_name} Score"] = compute_weighted_role_score(df_f, role_def["metrics"])
+df_f["Combined Score"] = combined_role_score(df_f, COMBINED_METRICS)
 
 # ----------------- Overall & Potential -----------------
 
 def age_bonus(age: float) -> int:
-    # 27 +0 / 26 +1 / 25 +2 / 24 +2 / 23 +3 / 22 +3 / 21 +4 / 20 +5 / 19 +6 / 18 +7 / 17 +8 / 16 +9
-    table = {
-        27:0, 26:1, 25:2, 24:2, 23:3, 22:3, 21:4, 20:5, 19:6, 18:7, 17:8, 16:9
-    }
+    table = {27:0, 26:1, 25:2, 24:2, 23:3, 22:3, 21:4, 20:5, 19:6, 18:7, 17:8, 16:9}
     a = int(age) if not pd.isna(age) else 27
     if a >= 28: return 0
     if a < 16: return 9
     return table.get(a, 0)
 
-# overall = (1-beta) * max(role scores) + beta * league_strength
-best_role = df_f[[f"{r} Score" for r in ROLES]].max(axis=1)
-df_f["Overall Rating"] = (1 - beta) * best_role + beta * (df_f["League Strength"].fillna(50))
-# potential = overall + age bump
+# overall = (1-beta) * CombinedScore + beta * league_strength
+df_f["Overall Rating"] = (1 - beta) * df_f["Combined Score"] + beta * (df_f["League Strength"].fillna(50))
 df_f["Potential"] = df_f.apply(lambda r: r["Overall Rating"] + age_bonus(r["Age"]), axis=1)
 
 # Contract year (just year)
 df_f["Contract Year"] = pd.to_datetime(df_f["Contract expires"], errors="coerce").dt.year.fillna(0).astype(int)
 
 # ----------------- Top N -----------------
-ranked = df_f.sort_values("Overall Rating", ascending=False).head(int(top_n)).copy()
-ranked.reset_index(drop=True, inplace=True)
+ranked = df_f.sort_values("Overall Rating", ascending=False).head(int(top_n)).copy().reset_index(drop=True)
 
 # ----------------- Image helper -----------------
-FALLBACK_URL = "https://i.redd.it/43axcjdu59nd1.jpeg"
+FALLBACK_URL = "https://preview.redd.it/is-it-only-me-that-is-against-signing-players-with-no-v0-43axcjdu59nd1.jpeg?auto=webp&s=a0cea2c5a1cb083911f3c776d096581974ab91ce"
 
 def guess_fotmob_url(team: str, player: str) -> str:
-    # Best-effort guess; FotMob usually keys by numeric id which we don't have.
-    # We'll try a plausible slug and let it 404; Streamlit will still attempt before we fallback.
     def slug(x):
         return re.sub(r"[^a-z0-9]+", "-", str(x).lower()).strip("-")
-    parts = [slug(player.split()[-1]), slug(team)]
+    surname = str(player).split()[-1]
+    parts = [slug(surname), slug(team)]
     return f"https://images.fotmob.com/image_resources/playerimages/{'-'.join(parts)}.png"
 
-# ----------------- RENDER -----------------
-cols = st.columns(1)
-container = cols[0]
+# rating color: 0→red, 50→green, 100→gold
 
+def rating_color(v: float) -> str:
+    v = max(0.0, min(100.0, float(v)))
+    if v <= 50:
+        t = v / 50.0  # 0..1 from red→green
+        # interpolate hue 0 (red) → 120 (green)
+        hue = 0 + 120 * t
+    else:
+        t = (v - 50.0) / 50.0  # 0..1 from green→gold (~55deg)
+        hue = 120 - (120 - 55) * t
+    return f"hsl({hue:.0f}, 80%, 55%)"
+
+# ----------------- RENDER -----------------
 for idx, row in ranked.iterrows():
     rank = idx + 1
     player = str(row.get("Player", ""))
@@ -289,38 +292,49 @@ for idx, row in ranked.iterrows():
     league = str(row.get("League", ""))
     pos = str(row.get("Position", ""))
     age = int(row.get("Age", 0)) if not pd.isna(row.get("Age", np.nan)) else 0
-    overall = int(round(row["Overall Rating"]))
-    potential = int(round(row["Potential"]))
+    overall = float(row["Overall Rating"]) if not pd.isna(row["Overall Rating"]) else 0
+    potential = float(row["Potential"]) if not pd.isna(row["Potential"]) else overall
     contract_year = int(row.get("Contract Year", 0))
 
+    overall_i = int(round(overall))
+    potential_i = int(round(potential))
+
     img_url_try = guess_fotmob_url(team, surname)
-    # Render a single tile
-    with container:
-        c = st.container()
-        with c:
-            st.markdown(f"""
-            <div class='player-card'>
-                <div class='rank'>#{rank}</div>
-                <img class='avatar' src='{img_url_try}' onerror="this.onerror=null;this.src='{FALLBACK_URL}';" />
-                <div style='flex:1'>
-                    <div class='name'>{player}</div>
-                    <div class='row' style='margin-top:4px;'>
-                        <span class='pill'>{overall}</span>
-                        <span class='sub'>Overall rating</span>
-                        <span class='pill-gray'>{potential}</span>
-                        <span class='sub'>Potential</span>
-                    </div>
-                    <div class='row' style='margin-top:6px;'>
-                        <span class='chip'>{pos}</span>
-                        <span class='chip'>{age} y.o.</span>
-                        <span class='chip'>{team}</span>
-                        <span class='chip'>{league}</span>
-                        <span class='chip'>Contract {contract_year if contract_year>0 else '—'}</span>
-                    </div>
-                </div>
-            </div>
-            <div class='divider'></div>
-            """, unsafe_allow_html=True)
+
+    # Build colored styles
+    ov_style = f"background:{rating_color(overall_i)};"
+    po_style = f"background:{rating_color(potential_i)};"
+
+    st.markdown(f"""
+    <div class='wrap'>
+      <div class='player-card'>
+        <div class='leftcol'>
+          <div class='rank'>#{rank}</div>
+          <img class='avatar' src='{img_url_try}' onerror="this.onerror=null;this.src='{FALLBACK_URL}';" />
+          <div class='row'>
+            <span class='chip'>{age} y.o.</span>
+            <span class='chip'>{contract_year if contract_year>0 else '—'}</span>
+          </div>
+        </div>
+        <div>
+          <div class='name'>{player}</div>
+          <div class='row' style='margin-top:6px;'>
+            <span class='pill' style='{ov_style}'> {int(round(overall))} </span>
+            <span class='sub'>Overall</span>
+            <span class='pill' style='{po_style}'> {int(round(potential))} </span>
+            <span class='sub'>Potential</span>
+            <span class='chip'>{pos}</span>
+            <span class='chip'>{team}</span>
+          </div>
+          <div class='row' style='margin-top:6px;'>
+            <span class='chip'>{league}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class='divider'></div>
+    """, unsafe_allow_html=True)
+
 
 
 
