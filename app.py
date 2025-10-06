@@ -210,52 +210,71 @@ POS_COLORS={
 }
 def chip_color(p:str)->str: return POS_COLORS.get(p.strip().upper(),"#2d3550")
 
-# ----------------- Flags (emoji + Twemoji images for ENG/SCT/WLS) -----------------
-# Twemoji CDN codes for UK subdivisions
-TWEMOJI_SPECIAL = {
-    "england": "1f3f4-e0067-e0062-e0065-e006e-e0067-e007f",  # 🏴
-    "scotland": "1f3f4-e0067-e0062-e0073-e0063-e006f-e0074-e007f",  # 🏴
-    "wales": "1f3f4-e0067-e0062-e0077-e0061-e006c-e0065-e007f",  # 🏴
-}
+# ----------------- Flags (Twemoji SVG for ALL countries) -----------------
+# Map many common country names -> ISO alpha-2 (lowercase)
 COUNTRY_TO_CC = {
     "united kingdom":"gb","great britain":"gb","northern ireland":"gb",
+    "england":"eng","scotland":"sct","wales":"wls",  # UK subdivisions (handled specially)
     "ireland":"ie","republic of ireland":"ie",
-    "england":"eng","scotland":"sct","wales":"wls",
-    "spain":"es","france":"fr","germany":"de","italy":"it","portugal":"pt","netherlands":"nl","belgium":"be","austria":"at","switzerland":"ch",
-    "denmark":"dk","sweden":"se","norway":"no","finland":"fi","iceland":"is","poland":"pl","czech republic":"cz","czechia":"cz","slovakia":"sk",
-    "slovenia":"si","croatia":"hr","serbia":"rs","bosnia and herzegovina":"ba","montenegro":"me","kosovo":"xk","albania":"al","greece":"gr",
-    "hungary":"hu","romania":"ro","bulgaria":"bg","russia":"ru","ukraine":"ua","georgia":"ge","kazakhstan":"kz","azerbaijan":"az","armenia":"am",
-    "turkey":"tr","qatar":"qa","saudi arabia":"sa","uae":"ae","israel":"il","morocco":"ma","algeria":"dz","tunisia":"tn","egypt":"eg","nigeria":"ng",
-    "ghana":"gh","senegal":"sn","ivory coast":"ci","cote d'ivoire":"ci","south africa":"za",
-    "brazil":"br","argentina":"ar","uruguay":"uy","chile":"cl","colombia":"co","peru":"pe","ecuador":"ec","paraguay":"py","bolivia":"bo","mexico":"mx",
-    "canada":"ca","united states":"us","usa":"us","japan":"jp","korea":"kr","south korea":"kr","china":"cn","australia":"au","new zealand":"nz",
-    "latvia":"lv","lithuania":"lt","estonia":"ee","moldova":"md","north macedonia":"mk","malta":"mt","cyprus":"cy","luxembourg":"lu","andorra":"ad",
-    "monaco":"mc","san marino":"sm","montenegro":"me","wales 1.":"wls"  # just in case
+    "spain":"es","france":"fr","germany":"de","italy":"it","portugal":"pt","netherlands":"nl","belgium":"be",
+    "austria":"at","switzerland":"ch","denmark":"dk","sweden":"se","norway":"no","finland":"fi","iceland":"is",
+    "poland":"pl","czech republic":"cz","czechia":"cz","slovakia":"sk","slovenia":"si","croatia":"hr","serbia":"rs",
+    "bosnia and herzegovina":"ba","montenegro":"me","kosovo":"xk","albania":"al","greece":"gr","hungary":"hu",
+    "romania":"ro","bulgaria":"bg","russia":"ru","ukraine":"ua","georgia":"ge","kazakhstan":"kz","azerbaijan":"az",
+    "armenia":"am","turkey":"tr","qatar":"qa","saudi arabia":"sa","uae":"ae","israel":"il","morocco":"ma",
+    "algeria":"dz","tunisia":"tn","egypt":"eg","nigeria":"ng","ghana":"gh","senegal":"sn","ivory coast":"ci",
+    "cote d'ivoire":"ci","south africa":"za","brazil":"br","argentina":"ar","uruguay":"uy","chile":"cl",
+    "colombia":"co","peru":"pe","ecuador":"ec","paraguay":"py","bolivia":"bo","mexico":"mx","canada":"ca",
+    "united states":"us","usa":"us","japan":"jp","korea":"kr","south korea":"kr","china":"cn","australia":"au",
+    "new zealand":"nz","latvia":"lv","lithuania":"lt","estonia":"ee","moldova":"md","north macedonia":"mk",
+    "malta":"mt","cyprus":"cy","luxembourg":"lu","andorra":"ad","monaco":"mc","san marino":"sm",
 }
-def country_norm(s:str)->str:
+
+# Twemoji codes for UK subdivisions (not standard ISO flags)
+TWEMOJI_SPECIAL = {
+    "eng": "1f3f4-e0067-e0062-e0065-e006e-e0067-e007f",                     # England
+    "sct": "1f3f4-e0067-e0062-e0073-e0063-e006f-e0074-e007f",               # Scotland
+    "wls": "1f3f4-e0067-e0062-e0077-e0061-e006c-e0065-e007f",               # Wales
+}
+
+def country_norm(s: str) -> str:
     if not s: return ""
     return unicodedata.normalize("NFKD", s).encode("ascii","ignore").decode("ascii").strip().lower()
 
-def flag_chip_html(country_name:str, age:int, contract_year:int)->str:
+def cc_to_twemoji_code(cc: str) -> str | None:
+    """
+    Convert ISO alpha-2 (e.g., 'fr') to Twemoji regional-indicator hex sequence,
+    e.g., 'fr' -> '1f1eb-1f1f7'
+    """
+    if not cc or len(cc) != 2: 
+        return None
+    a, b = cc.upper()
+    cp1 = 0x1F1E6 + (ord(a) - ord('A'))
+    cp2 = 0x1F1E6 + (ord(b) - ord('A'))
+    return f"{cp1:04x}-{cp2:04x}"
+
+def flag_chip_html(country_name: str, age: int, contract_year: int) -> str:
     n = country_norm(country_name)
-    # UK subdivisions via twemoji images
-    if n in TWEMOJI_SPECIAL:
-        code = TWEMOJI_SPECIAL[n]
-        img = f"<img src='https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/svg/{code}.svg' alt='{country_name}'>"
-        flag = f"<span class='flagchip'>{img}</span>"
+    cc = COUNTRY_TO_CC.get(n, "")
+    # special UK subdivision svg
+    if cc in TWEMOJI_SPECIAL:
+        code = TWEMOJI_SPECIAL[cc]
+        src = f"https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/svg/{code}.svg"
+        flag_html = f"<span class='flagchip'><img src='{src}' alt='{country_name}'></span>"
     else:
-        cc = COUNTRY_TO_CC.get(n, "")
-        if len(cc)==2:  # standard emoji flags
-            # build emoji from regional indicators
-            base = 127397
-            emoji = chr(base + ord(cc[0].upper())) + chr(base + ord(cc[1].upper()))
-            flag = f"<span class='chip'>{emoji}</span>"
+        code = cc_to_twemoji_code(cc) if len(cc) == 2 else None
+        if code:
+            src = f"https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/svg/{code}.svg"
+            flag_html = f"<span class='flagchip'><img src='{src}' alt='{country_name}'></span>"
         else:
-            flag = "<span class='chip'>—</span>"
+            # unknown → just blank chip
+            flag_html = "<span class='chip'>—</span>"
+
     age_chip = f"<span class='chip'>{age}y.o.</span>"
-    yr = f"{contract_year}" if contract_year>0 else "—"
+    yr = f"{contract_year}" if contract_year > 0 else "—"
     contract_chip = f"<span class='chip'>{yr}</span>"
-    return f"<div class='row'>{flag}{age_chip}{contract_chip}</div>"
+    return f"<div class='row'>{flag_html}{age_chip}{contract_chip}</div>"
+
 
 # ----------------- RENDER -----------------
 for idx,row in ranked.iterrows():
