@@ -1,11 +1,11 @@
-# app_top20_tiles.py — Top 20 Tiles with multi-source headshots (Wiki → Sofifa → FIFACM → FotMob → fallback)
-# Requirements: streamlit, pandas, numpy, requests, beautifulsoup4
-
+# app_top20_tiles.py — Top 20 Tiles with multi-source headshots (SofaScore → SoFIFA → FIFACM → FotMob → fallback)
+# Requirements: streamlit, pandas, numpy, requests, beautifulsoup4  (optional: lxml)
 
 import os
 import io
 import re
 import math
+import base64
 import unicodedata
 from pathlib import Path
 
@@ -20,7 +20,7 @@ st.set_page_config(page_title="Advanced Striker Scouting — Top 20 Tiles", layo
 st.title("🔎 Advanced Striker Scouting — Top 20 Tiles")
 st.caption(
     "Overall = league-weighted combined-role score. Potential = Overall + age bonus. "
-    "Headshots resolved in order: Wikipedia → Sofifa → FIFACM → FotMob → fallback."
+    "Headshots: SofaScore → SoFIFA → FIFACM → FotMob → fallback (served as data URIs)."
 )
 
 # ----------------- STYLE -----------------
@@ -45,9 +45,9 @@ st.markdown(
       .avatar {
         width:96px; height:96px; border-radius:12px;
         background-color:#0b0d12; border:1px solid #2a3145;
-        background-repeat:no-repeat, no-repeat;
-        background-position:center center, center center;
-        background-size:cover, cover;
+        background-repeat:no-repeat;
+        background-position:center center;
+        background-size:cover;
       }
       .leftcol { display:flex; flex-direction:column; align-items:center; gap:8px; }
       .name { font-weight:800; font-size:22px; color:#e8ecff; margin-bottom:6px; }
@@ -58,6 +58,7 @@ st.markdown(
       .teamline { color:#e6ebff; font-size:15px; font-weight:400; margin-top:2px; }
       .rank { color:#94a0c6; font-weight:800; font-size:18px; text-align:right; }
       .divider { height:12px; }
+      .src { margin-left:8px; color:#8aa0ff; font-size:12px; opacity:.8; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -218,6 +219,8 @@ with st.sidebar:
 
     top_n = st.number_input("How many tiles", 5, 100, 20, 5)
 
+    show_img_source = st.checkbox("Show image source tag", value=False)
+
 # ----------------- VALIDATION -----------------
 missing = [c for c in REQUIRED_BASE if c not in df.columns]
 if missing:
@@ -280,60 +283,190 @@ df_f["Contract Year"] = pd.to_datetime(df_f["Contract expires"], errors="coerce"
 # ----------------- Top N -----------------
 ranked = df_f.sort_values("Overall Rating", ascending=False).head(int(top_n)).copy().reset_index(drop=True)
 
-# ----------------- IMAGE RESOLUTION HELPERS (NO WIKIPEDIA) -----------------
+# ----------------- IMAGE RESOLUTION HELPERS -----------------
 def _norm(s: str) -> str:
     s = (s or "").strip()
     s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
     return s.lower()
 
+TEAM_STRIP = re.compile(r"\b(fc|cf|sc|afc|ud|ac|bc|cd|sd|deportivo|club|city|united|town|athletic|sporting|sv|fk|sk|ik|if)\b", re.I)
+
+def _simplify_team(t: str) -> str:
+    t = _norm(t)
+    t = TEAM_STRIP.sub("", t)
+    t = re.sub(r"[^a-z0-9]+", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+def _fetch_image_as_data_uri(url: str, timeout=8) -> tuple[str | None, str]:
+    """
+    Download image to data: URI to avoid hotlinking issues.
+    Returns (data_uri_or_none, source_tag_for_debug).
+    """
+    try:
+        r = requests.get(url, headers=UA, timeout=timeout, stream=True)
+        if not r.ok:
+            return None, ""
+        ctype = r.headers.get("Content-Type", "").lower()
+        if not ctype.startswith("image/"):
+            # Guess from extension if missing
+            if url.lower().endswith(".png"): ctype = "image/png"
+            elif url.lower().endswith(".jpg") or url.lower().endswith(".jpeg"): ctype = "image/jpeg"
+            else: return None, ""
+        data = r.content
+        b64 = base64.b64encode(data).decode("ascii")
+        return f"data:{ctype};base64,{b64}", ""
+    except Exception:
+        return None, ""
+
+# ---------- SofaScore (primary) ----------
 @st.cache_data(show_spinner=False, ttl=60*60*24)
-def sofifa_headshot(player_name: str, team_name: str | None = None) -> str | None:
-    """Search Sofifa and return their CDN headshot if possible."""
+def sofascore_search_players(q: str) -> list[dict]:
+    """
+    Try multiple SofaScore endpoints (they sometimes differ by region/app domain).
+    Returns list of player dicts with fields like {'name','team','id'} when available.
+    """
+    endpoints = [
+        ("https://api.sofascore.com/api/v1/search/all", {"q": q}),
+        ("https://api.sofascore.app/api/v1/search/all", {"q": q}),
+        ("https://api.sofascore.com/api/v1/search", {"q": q}),
+        ("https://api.sofascore.app/api/v1/search", {"q": q}),
+    ]
+    for url, params in endpoints:
+        try:
+            r = requests.get(url, params=params, headers=UA, timeout=7)
+            if not r.ok:
+                continue
+            js = r.json()
+            # shape can be {"players":[...]} or {"results":{"player":[...]}}
+            players = []
+            if "players" in js:
+                players = js.get("players", [])
+            elif "results" in js and "player" in js["results"]:
+                players = js["results"]["player"] or []
+            # normalize common fields
+            normd = []
+            for p in players:
+                pid = p.get("id") or p.get("player", {}).get("id")
+                name = p.get("name") or p.get("player", {}).get("name") or p.get("fullName")
+                team = (p.get("team", {}) or {}).get("name") or p.get("teamName") or ""
+                if pid and name:
+                    normd.append({"id": pid, "name": name, "team": team})
+            if normd:
+                return normd
+        except Exception:
+            continue
+    return []
+
+def _score_name_team(player_q: str, team_q: str | None, name: str, team: str) -> int:
+    score = 0
+    if player_q and (player_q in name or name in player_q): score += 4
+    pq_last = player_q.split()[-1] if player_q else ""
+    if pq_last and pq_last in name: score += 2
+    if team_q and team_q in team:  score += 3
+    return score
+
+@st.cache_data(show_spinner=False, ttl=60*60*24)
+def sofascore_headshot_data_uri(player_name: str, team_name: str | None = None) -> tuple[str | None, str]:
+    """
+    Resolve SofaScore player by surname+team; return (data_uri, 'SofaScore') or (None,'').
+    Tries multiple image URL patterns.
+    """
+    if not player_name:
+        return None, ""
+    pn_raw = player_name.replace(".", " ").strip()
+    tn_raw = (team_name or "").strip()
+    surname = pn_raw.split()[-1] if pn_raw else ""
+    queries = [f"{surname} {tn_raw}".strip(), f"{pn_raw} {tn_raw}".strip(), pn_raw]
+
+    player_q = _norm(pn_raw)
+    team_q = _simplify_team(tn_raw) if tn_raw else None
+
+    best_id, best_score = None, -1
+    for q in queries:
+        plist = sofascore_search_players(q)
+        for p in plist:
+            name = _norm(p.get("name", ""))
+            team = _simplify_team(p.get("team", ""))
+            pid  = p.get("id")
+            s = _score_name_team(player_q, team_q, name, team)
+            if s > best_score:
+                best_score, best_id = s, pid
+        if best_id is not None and best_score >= 5:
+            break
+    if best_id is None:
+        return None, ""
+
+    # Try a few image URL variants
+    img_candidates = [
+        f"https://api.sofascore.com/api/v1/player/{best_id}/image",
+        f"https://api.sofascore.app/api/v1/player/{best_id}/image",
+        f"https://www.sofascore.com/api/v1/player/{best_id}/image",
+        f"https://api.sofascore.com/api/v1/player/{best_id}/image?width=120&height=120",
+    ]
+    for u in img_candidates:
+        data_uri, _ = _fetch_image_as_data_uri(u)
+        if data_uri:
+            return data_uri, "SofaScore"
+    return None, ""
+
+# ---------- SoFIFA ----------
+@st.cache_data(show_spinner=False, ttl=60*60*24)
+def sofifa_headshot_data_uri(player_name: str, team_name: str | None = None) -> tuple[str | None, str]:
     try:
         q = f"{player_name} {team_name or ''}".strip()
         r = requests.get("https://sofifa.com/search", params={"keyword": q}, headers=UA, timeout=7)
         if not r.ok:
-            return None
-        soup = BeautifulSoup(r.text, "html.parser")
+            return None, ""
+        soup = BeautifulSoup(r.text, "lxml" if "lxml" in str(BeautifulSoup).lower() else "html.parser")
         a = soup.select_one("a[href^='/player/']")
         if not a:
-            return None
+            return None, ""
         href = a.get("href", "")
-        m = re.search(r"/player/(\d+)", href)
+        m = re.search(r"/player/(\\d+)", href)
         if not m:
-            return None
+            m = re.search(r"/player/(\\d+)", href.replace("\\", ""))
+        if not m:
+            return None, ""
         pid = int(m.group(1))
-        # Sofifa CDN path is /players/AAA/BBB/VV_120.png (id split into 3+3; VV = game version)
         a3 = f"{pid // 1000:03d}"
         b3 = f"{pid % 1000:03d}"
-        # Try recent versions; browser will fetch the one we return
         for ver in ("25", "24", "23", "22", "21"):
-            return f"https://cdn.sofifa.net/players/{a3}/{b3}/{ver}_120.png"
+            url = f"https://cdn.sofifa.net/players/{a3}/{b3}/{ver}_120.png"
+            data_uri, _ = _fetch_image_as_data_uri(url)
+            if data_uri:
+                return data_uri, "SoFIFA"
     except Exception:
-        return None
-    return None
+        return None, ""
+    return None, ""
 
+# ---------- FIFACM ----------
 @st.cache_data(show_spinner=False, ttl=60*60*24)
-def fifacm_headshot(player_name: str, team_name: str | None = None) -> str | None:
-    """Search FIFACM and return first player face if available."""
+def fifacm_headshot_data_uri(player_name: str, team_name: str | None = None) -> tuple[str | None, str]:
     try:
         q = f"{player_name} {team_name or ''}".strip()
         r = requests.get("https://www.fifacm.com/players", params={"name": q}, headers=UA, timeout=7)
         if not r.ok:
-            return None
-        soup = BeautifulSoup(r.text, "html.parser")
+            return None, ""
+        soup = BeautifulSoup(r.text, "lxml" if "lxml" in str(BeautifulSoup).lower() else "html.parser")
         a = soup.select_one("a[href^='/player/']")
         if not a:
-            return None
+            return None, ""
         href = a.get("href", "")
-        m = re.search(r"/player/(\d+)", href)
+        m = re.search(r"/player/(\\d+)", href)
         if not m:
-            return None
+            m = re.search(r"/player/(\\d+)", href.replace("\\", ""))
+        if not m:
+            return None, ""
         eaid = m.group(1)
-        return f"https://cdn.fifacm.com/players/{eaid}.png"
+        url = f"https://cdn.fifacm.com/players/{eaid}.png"
+        data_uri, _ = _fetch_image_as_data_uri(url)
+        if data_uri:
+            return data_uri, "FIFACM"
     except Exception:
-        return None
+        return None, ""
+    return None, ""
 
+# ---------- FotMob ----------
 @st.cache_data(show_spinner=False, ttl=60*60*24)
 def fotmob_search(query: str) -> dict | None:
     try:
@@ -346,26 +479,23 @@ def fotmob_search(query: str) -> dict | None:
 
 def _score_match(player_q: str, team_q: str | None, name: str, team: str) -> int:
     score = 0
-    if player_q and (player_q in name or name in player_q):
-        score += 4
+    if player_q and (player_q in name or name in player_q): score += 4
     pq_last = player_q.split()[-1] if player_q else ""
-    if pq_last and pq_last in name:
-        score += 2
-    if team_q and team_q in team:
-        score += 3
+    if pq_last and pq_last in name: score += 2
+    if team_q and team_q in team:  score += 3
     return score
 
 @st.cache_data(show_spinner=False, ttl=60*60*24)
-def fotmob_headshot(player_name: str, team_name: str | None = None) -> str | None:
-    """Resolve FotMob ID via search (surname+team first) and return headshot URL."""
+def fotmob_headshot_data_uri(player_name: str, team_name: str | None = None) -> tuple[str | None, str]:
     if not player_name:
-        return None
+        return None, ""
     pn_raw = player_name.replace(".", " ").strip()
     tn_raw = (team_name or "").strip()
     surname = pn_raw.split()[-1] if pn_raw else ""
     queries = [f"{surname} {tn_raw}".strip(), f"{pn_raw} {tn_raw}".strip(), pn_raw]
     player_q = _norm(pn_raw)
     team_q = _norm(tn_raw) if tn_raw else None
+
     best, best_score = None, -1
     for q in queries:
         data = fotmob_search(q)
@@ -374,31 +504,44 @@ def fotmob_headshot(player_name: str, team_name: str | None = None) -> str | Non
         for p in data.get("players", []):
             name = _norm(p.get("name", ""))
             team = _norm(p.get("teamName", ""))
-            pid = p.get("id")
+            pid  = p.get("id")
             s = _score_match(player_q, team_q, name, team)
             if s > best_score:
                 best_score, best = s, pid
         if best is not None and best_score >= 5:
             break
     if best is None:
-        return None
-    return f"https://images.fotmob.com/image_resources/playerimages/{best}.png"
+        return None, ""
+    url = f"https://images.fotmob.com/image_resources/playerimages/{best}.png"
+    data_uri, _ = _fetch_image_as_data_uri(url)
+    if data_uri:
+        return data_uri, "FotMob"
+    return None, ""
 
-def resolve_player_image_url(player_name: str, team_name: str | None) -> str:
+def resolve_player_image_data_uri(player_name: str, team_name: str | None) -> tuple[str, str]:
     """
-    Try Sofifa → FIFACM → FotMob → fallback.
-    Returns a URL (CSS multi-background still provides the hard fallback).
+    Best-effort resolver:
+    SofaScore → SoFIFA → FIFACM → FotMob → fallback.
+    Returns (data_uri_or_fallback_url, source_tag).
     """
-    s = sofifa_headshot(player_name, team_name)
-    if s:
-        return s
-    fcm = fifacm_headshot(player_name, team_name)
-    if fcm:
-        return fcm
-    fm = fotmob_headshot(player_name, team_name)
-    if fm:
-        return fm
-    return FALLBACK_URL
+    # 1) SofaScore
+    data_uri, src = sofascore_headshot_data_uri(player_name, team_name)
+    if data_uri:
+        return data_uri, src
+    # 2) SoFIFA
+    data_uri, src = sofifa_headshot_data_uri(player_name, team_name)
+    if data_uri:
+        return data_uri, src
+    # 3) FIFACM
+    data_uri, src = fifacm_headshot_data_uri(player_name, team_name)
+    if data_uri:
+        return data_uri, src
+    # 4) FotMob
+    data_uri, src = fotmob_headshot_data_uri(player_name, team_name)
+    if data_uri:
+        return data_uri, src
+    # 5) fallback (leave as normal URL; no need to re-download)
+    return FALLBACK_URL, "Fallback"
 
 # ----------------- SoFIFA-style colors -----------------
 PALETTE = [
@@ -430,11 +573,13 @@ for idx, row in ranked.iterrows():
     potential_i = int(round(float(row["Potential"])))
     contract_year = int(row.get("Contract Year", 0))
 
-    primary = resolve_player_image_url(player, team)  # multi-source
-    avatar_style = f"background-image: url('{primary}'), url('{FALLBACK_URL}');"
+    primary, src_tag = resolve_player_image_data_uri(player, team)
+    avatar_style = f"background-image: url('{primary}');"
 
     ov_style = f"background:{rating_color(overall_i)};"
     po_style = f"background:{rating_color(potential_i)};"
+
+    src_html = f"<span class='src'>({src_tag})</span>" if show_img_source else ""
 
     st.markdown(f"""
     <div class='wrap'>
@@ -447,7 +592,7 @@ for idx, row in ranked.iterrows():
           </div>
         </div>
         <div>
-          <div class='name'>{player}</div>
+          <div class='name'>{player} {src_html}</div>
           <div class='row'>
             <span class='pill' style='{ov_style}'>{overall_i}</span>
             <span class='sub'>Overall rating</span>
@@ -466,6 +611,7 @@ for idx, row in ranked.iterrows():
     </div>
     <div class='divider'></div>
     """, unsafe_allow_html=True)
+
 
 
 
