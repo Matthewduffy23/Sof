@@ -34,7 +34,7 @@ st.markdown(
     .chip { background:var(--soft); color:#cbd5f5; border:1px solid #2d3550; padding:3px 10px; border-radius:9px; font-size:13px; }
     .leftcol { display:flex; flex-direction:column; align-items:center; gap:8px; }
     .divider { height:12px; }
-    .teamline { color:#e6ebff; font-size:18px; font-weight:700; margin-top:2px; }
+    .teamline { color:#e6ebff; font-size:16px; font-weight:500; margin-top:2px; }
 </style>
     """,
     unsafe_allow_html=True,
