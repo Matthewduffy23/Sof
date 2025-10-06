@@ -1,6 +1,6 @@
-# app.py — Advanced Striker Scouting + "Tiles" view with FotMob headshots
-# Drop-in single file. Requires: streamlit, pandas, numpy, matplotlib, requests.
-# (scikit-learn optional: fallback StandardScaler included.)
+# app.py — Advanced Striker Scouting + Tiles (FotMob headshots)
+# Requires: streamlit, pandas, numpy, matplotlib, requests
+# (scikit-learn optional; a tiny StandardScaler fallback is included)
 
 import os
 import io
@@ -165,6 +165,70 @@ def load_df(csv_name: str = "WORLDJUNE25.csv") -> pd.DataFrame:
 
 df = load_df()
 
+# ----------------- FOTMOB LOOKUP (name + team) -----------------
+def _strip_accents(s: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFKD", str(s)) if not unicodedata.combining(c))
+
+def _canon(s: str) -> str:
+    s = _strip_accents(s).lower()
+    return re.sub(r"[^a-z0-9]+", " ", str(s)).strip()
+
+def _similar(a: str, b: str) -> float:
+    ta, tb = set(_canon(a).split()), set(_canon(b).split())
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+TEAM_ALIASES = {
+    "man utd":"manchester united",
+    "psg":"paris saint germain",
+    "inter":"internazionale",
+    # extend if your dataset team labels differ from FotMob
+}
+
+@st.cache_data(show_spinner=False, ttl=60*60*24)
+def fotmob_image_url(player_name: str, team_name: str | None = None) -> str | None:
+    """Return a FotMob PNG headshot URL for a (player, team) if found; else None."""
+    try:
+        q = requests.utils.quote(str(player_name))
+        r = requests.get(f"https://www.fotmob.com/api/search?q={q}", timeout=6,
+                         headers={"User-Agent":"Mozilla/5.0"})
+        if r.status_code != 200:
+            return None
+        js = r.json()
+        cand = js.get("players") or []
+        if not cand:
+            return None
+
+        team_target = _canon(TEAM_ALIASES.get(_canon(team_name or ""), team_name or ""))
+
+        pick = None
+        if team_target:
+            exact = [c for c in cand if _canon(c.get("team",{}).get("name","")) == team_target]
+            if exact:
+                pick = exact[0]
+            else:
+                scored = sorted(
+                    (( _similar(c.get("team",{}).get("name",""), team_target), c) for c in cand),
+                    key=lambda x: x[0], reverse=True
+                )
+                if scored and scored[0][0] >= 0.6:
+                    pick = scored[0][1]
+        if pick is None:
+            pick = cand[0]
+
+        pid = pick.get("id")
+        if not pid:
+            return None
+        url = f"https://images.fotmob.com/image_resources/playerimages/{pid}.png"
+        hr = requests.head(url, timeout=6, headers={"User-Agent":"Mozilla/5.0"})
+        return url if hr.status_code == 200 else None
+    except Exception:
+        return None
+
+# Default fallback; you can upload your own below
+DEFAULT_FALLBACK_IMG = "https://static.fotmob.com/players/_fallback.png"
+
 # ----------------- SIDEBAR FILTERS -----------------
 with st.sidebar:
     st.header("Filters")
@@ -227,6 +291,13 @@ with st.sidebar:
 
     top_n = st.number_input("Top N per table", 5, 200, 50, 5)
     round_to = st.selectbox("Round output percentiles to", [0, 1], index=0)
+
+    st.subheader("Tile fallback image")
+    upl = st.file_uploader("Optional: upload a fallback image (PNG/JPG)", type=["png","jpg","jpeg"])
+    if upl is not None:
+        FALLBACK_IMG_BYTES = upl.getvalue()
+    else:
+        FALLBACK_IMG_BYTES = None
 
 # ----------------- VALIDATION -----------------
 missing = [c for c in REQUIRED_BASE if c not in df.columns]
@@ -319,51 +390,30 @@ def filtered_view(df_in: pd.DataFrame, *, age_max=None, contract_year=None, valu
     if value_max is not None: t = t[t["Market value"] <= value_max]
     return t
 
-    with tabs[4]:
-        st.subheader(f"{role} — Top 10 (tiles)")
-        top10 = top_table(df_f, role, 10).reset_index()
-        # top_table returns columns: index (rank), Player, Team, League, Position, Age, Contract expires, League Strength, {role} Score
-        score_col = f"{role} Score"
-
-        for _, row in top10.iterrows():
-            cols = st.columns([1, 6, 1])  # image, text, rank
-            with cols[0]:
-                img = fotmob_image_url(row["Player"], row["Team"]) or FALLBACK_IMG
-                st.image(img, use_container_width=True)
-            with cols[1]:
-                st.markdown(f"**{row['Player']}**")
-                st.caption(f"{row['Team']}")
-                st.caption(f"{row['League']} · {row['Position']} · {int(row['Age'])}y")
-                c1, c2 = st.columns([1,1])
-                with c1:
-                    st.metric("Overall", int(row[score_col]))
-                with c2:
-                    st.metric("Potential", int(row[score_col]))  # same as score for now
-            with cols[2]:
-                st.caption(f"#{int(row['index'])}")
-            st.divider()
-
-
-# ----------------- TABS (tables) -----------------
+# ----------------- TABS (tables + tiles) -----------------
 tabs = st.tabs(["Overall Top N", "U23 Top N", "Expiring Contracts", "Value Band (≤ max €)", "Tiles (Top 10 per role)"])
+
 for role, role_def in ROLES.items():
     with tabs[0]:
         st.subheader(f"{role} — Overall Top {int(top_n)}")
         st.caption(role_def.get("desc", ""))
         st.dataframe(top_table(df_f, role, int(top_n)), use_container_width=True)
         st.divider()
+
     with tabs[1]:
         u23_cutoff = st.number_input(f"{role} — U23 cutoff", min_value=16, max_value=30, value=23, step=1, key=f"u23_{role}")
         st.subheader(f"{role} — U{u23_cutoff} Top {int(top_n)}")
         st.caption(role_def.get("desc", ""))
         st.dataframe(top_table(filtered_view(df_f, age_max=u23_cutoff), role, int(top_n)), use_container_width=True)
         st.divider()
+
     with tabs[2]:
         exp_year = st.number_input(f"{role} — Expiring by year", min_value=2024, max_value=2030, value=cutoff_year, step=1, key=f"exp_{role}")
         st.subheader(f"{role} — Contracts expiring ≤ {exp_year}")
         st.caption(role_def.get("desc", ""))
         st.dataframe(top_table(filtered_view(df_f, contract_year=exp_year), role, int(top_n)), use_container_width=True)
         st.divider()
+
     with tabs[3]:
         v_max = st.number_input(f"{role} — Max value (€)", min_value=0, value=value_band_max, step=100_000, key=f"val_{role}")
         st.subheader(f"{role} — Value band ≤ €{v_max:,.0f}")
@@ -375,6 +425,23 @@ for role, role_def in ROLES.items():
 with tabs[4]:
     st.subheader("Player Tiles — Top 10 per role")
     st.caption("Headshots via FotMob by name + team. Potential = Role Score.")
+
+    # CSS for dark grey tiles
+    st.markdown("""
+    <style>
+      .tile {
+        background:#1E1F25; border-radius:14px; padding:14px; margin:10px 0;
+        box-shadow: 0 0 0 1px rgba(255,255,255,0.05) inset;
+      }
+      .badge {
+        display:inline-block; padding:6px 10px; border-radius:10px; margin-right:8px; font-weight:700;
+      }
+      .badge-green { background:#1f6e3a; color:#fff; }
+      .badge-dark  { background:#3b4151; color:#fff; font-weight:600; }
+      .minor { color:#9aa0aa; }
+    </style>
+    """, unsafe_allow_html=True)
+
     for role, role_def in ROLES.items():
         score_col = f"{role} Score"
         top10 = df_f.dropna(subset=[score_col]).sort_values(score_col, ascending=False).head(10)
@@ -382,36 +449,50 @@ with tabs[4]:
             continue
 
         st.markdown(f"### {role}")
-        # 5 tiles per row
         for i, (_, row) in enumerate(top10.iterrows(), start=1):
-            c1, c2 = st.columns([1, 2], gap="small")
-            with c1:
-                img_url = fotmob_image_url(row["Player"], row["Team"]) or FALLBACK_IMG
-                st.image(img_url, use_container_width=True)
-            with c2:
+            c_img, c_txt, c_rank = st.columns([1, 6, 1], gap="medium")
+
+            # Resolve image (uploaded fallback > default fallback)
+            with c_img:
+                url = fotmob_image_url(row["Player"], row["Team"])
+                if url:
+                    st.image(url, use_container_width=True)
+                else:
+                    if FALLBACK_IMG_BYTES is not None:
+                        st.image(FALLBACK_IMG_BYTES, use_container_width=True)
+                    else:
+                        st.image(DEFAULT_FALLBACK_IMG, use_container_width=True)
+
+            with c_txt:
                 rating = int(round(row[score_col]))
-                potential = rating  # as requested
+                potential = rating
                 age = int(row["Age"]) if pd.notna(row["Age"]) else "—"
                 league = row.get("League", "—")
                 pos = row.get("Position", "—")
                 team = row.get("Team", "—")
+
                 st.markdown(
                     f"""
-                    <div style="display:flex;justify-content:space-between;align-items:center;">
-                      <div style="font-weight:700;font-size:1.05rem">{row['Player']}</div>
-                      <div style="font-size:0.9rem;color:#888">#{i}</div>
-                    </div>
-                    <div style="margin-top:4px;font-size:0.95rem;"><b>{team}</b></div>
-                    <div style="margin-top:2px;color:#888;font-size:0.9rem">{league} · {pos} · {age}y</div>
-                    <div style="display:flex;gap:10px;margin-top:6px;">
-                      <div style="background:#1f6e3a;color:#fff;padding:6px 8px;border-radius:8px;font-weight:700;">{rating}</div>
-                      <div style="background:#3b4151;color:#fff;padding:6px 8px;border-radius:8px;">Overall</div>
-                      <div style="background:#1f6e3a;color:#fff;padding:6px 8px;border-radius:8px;font-weight:700;">{potential}</div>
-                      <div style="background:#3b4151;color:#fff;padding:6px 8px;border-radius:8px;">Potential</div>
+                    <div class="tile">
+                      <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <div style="font-weight:700;font-size:1.05rem;color:#fff;">{row['Player']}</div>
+                        <div class="minor">#{i}</div>
+                      </div>
+                      <div style="margin-top:2px;color:#fff;"><b>{team}</b></div>
+                      <div class="minor" style="margin-top:2px;">{league} · {pos} · {age}y</div>
+                      <div style="display:flex;gap:10px;margin-top:8px;align-items:center;">
+                        <span class="badge badge-green">{rating}</span>
+                        <span class="badge badge-dark">Overall</span>
+                        <span class="badge badge-green">{potential}</span>
+                        <span class="badge badge-dark">Potential</span>
+                      </div>
                     </div>
                     """,
                     unsafe_allow_html=True,
                 )
-            if i % 5 == 0:
-                st.markdown("---")
+
+            with c_rank:
+                st.caption(f"#{i}")
+
         st.divider()
+
