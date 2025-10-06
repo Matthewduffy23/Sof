@@ -1,4 +1,4 @@
-# app_top20_tiles.py — Top 20 Tiles (CF) with beta-weighted role pills, flags, no club badges
+# app_top20_tiles.py — Top 20 Tiles (CF) with fixed image, colored role tags, emoji flags
 # Requirements: streamlit, pandas, numpy
 
 import io
@@ -6,6 +6,7 @@ import re
 import math
 import unicodedata
 from pathlib import Path
+import html
 
 import streamlit as st
 import pandas as pd
@@ -15,8 +16,8 @@ import numpy as np
 st.set_page_config(page_title="Advanced Striker Scouting — Top 20 Tiles", layout="wide")
 st.title("🔎 Advanced Striker Scouting — Top 20 Tiles")
 st.caption(
-    "Ranked by ‘All in’ (league-weighted with sidebar β). Cards show Goal Threat, Link-Up CF and Target Man CF. "
-    "Only players whose Position starts with CF. Flag = Birth country. No team badges."
+    "Ranked by ‘All in’ (league-weighted). Pills show Goal Threat, Link-Up CF, Target Man CF. "
+    "Pool = Position starts with CF. Flag = Birth country. No team badges."
 )
 
 # ----------------- STYLE -----------------
@@ -25,13 +26,13 @@ st.markdown(
     <style>
       :root { --bg: #0f1115; --card: #161a22; --muted: #a8b3cf; --soft: #202633; }
       .block-container { padding-top: 0.8rem; }
-      body { background-color: var(--bg); }
+      body { background-color: var(--bg); font-family: system-ui, -apple-system, "Segoe UI", "Segoe UI Emoji", Roboto, Helvetica, Arial, sans-serif; }
       .wrap { display:flex; justify-content:center; }
       .player-card {
-        width:min(520px, 96%);
+        width:min(420px, 96%);
         display:grid;
-        grid-template-columns: 96px 1fr 40px; /* photo | content | rank */
-        gap:14px;
+        grid-template-columns: 96px 1fr 48px; /* photo | content | rank */
+        gap:12px;
         align-items:center;
         background:var(--card);
         border:1px solid #252b3a;
@@ -44,13 +45,17 @@ st.markdown(
         border:1px solid #2a3145;
       }
       .leftcol { display:flex; flex-direction:column; align-items:center; gap:8px; }
+      .meta3 { display:grid; grid-template-columns: repeat(3, auto); gap:8px; align-items:center; }
       .name { font-weight:800; font-size:22px; color:#e8ecff; margin-bottom:6px; }
       .sub { color:#a8b3cf; font-size:15px; }
       .pill { padding:2px 10px; border-radius:9px; font-weight:800; font-size:18px; color:#0b0d12; display:inline-block; min-width:42px; text-align:center; }
-      .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:6px 0; }
-      .chip { background:var(--soft); color:#cbd5f5; border:1px solid #2d3550; padding:3px 10px; border-radius:9px; font-size:13px; }
+      .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:4px 0; }
+      .chip {
+        background:var(--soft); color:#cbd5f5; border:1px solid #2d3550;
+        padding:3px 10px; border-radius:10px; font-size:13px; line-height:18px;
+      }
       .pos { color:#eaf0ff; font-weight:700; padding:4px 10px; border-radius:10px; font-size:12px; border:1px solid rgba(255,255,255,0.08); }
-      .teamline { color:#e6ebff; font-size:15px; font-weight:500; margin-top:2px; }
+      .teamline { color:#e6ebff; font-size:15px; font-weight:400; margin-top:2px; }
       .rank { color:#94a0c6; font-weight:800; font-size:18px; text-align:right; }
       .divider { height:12px; }
     </style>
@@ -59,8 +64,6 @@ st.markdown(
 )
 
 # ----------------- CONFIG -----------------
-FALLBACK_URL = "https://i.redd.it/43axcjdu59nd1.jpeg"
-
 INCLUDED_LEAGUES = [
     'England 1.', 'England 2.', 'England 3.', 'England 4.', 'England 5.',
     'England 6.', 'England 7.', 'England 8.', 'England 9.', 'England 10.',
@@ -115,9 +118,8 @@ ROLES = {
             'Progressive runs per 90': 2, 'xA per 90': 3
         }
     },
-    # YOUR requested Target Man CF: ONLY two features, weights: % = 4, duels = 3
     'Target Man CF': {
-        'desc': "Aerial dominance and physical presence.",
+        'desc': "Aerial presence & duel dominance for a focal point game.",
         'metrics': {
             'Aerial duels won, %': 4,
             'Aerial duels per 90': 3,
@@ -125,7 +127,7 @@ ROLES = {
     },
     'All in': {
         'desc': "Blend of creation + scoring; balanced all-round attacking profile.",
-        'metrics': { 'xA per 90': 2, 'Dribbles per 90': 2, 'xG per 90': 3, 'Non-penalty goals per 90': 3 }
+        'metrics': {'xA per 90': 2, 'Dribbles per 90': 2, 'xG per 90': 3, 'Non-penalty goals per 90': 3}
     }
 }
 
@@ -155,9 +157,7 @@ LEAGUE_STRENGTHS = {
     'Northern Ireland 1.':11.43,'England 10.':10.00,'Scotland 3.':10.00,'England 6.':10.00
 }
 
-REQUIRED_BASE = {
-    "Player","Team","League","Age","Position","Minutes played","Market value","Contract expires","Goals","Birth country"
-}
+REQUIRED_BASE = {"Player","Team","League","Age","Position","Minutes played","Market value","Contract expires","Goals","Birth country"}
 
 # ----------------- DATA LOADING -----------------
 @st.cache_data(show_spinner=False)
@@ -200,7 +200,7 @@ with st.sidebar:
     default_sel = PRESETS[preset]
     leagues_sel = st.multiselect("Leagues", leagues_avail, default=default_sel)
 
-    # Beta slider for ALL scores
+    # β applies to all scores
     beta = st.slider("League weighting beta (applies to all scores)", 0.0, 1.0, 0.40, 0.05)
 
     df["Minutes played"] = pd.to_numeric(df["Minutes played"], errors="coerce")
@@ -280,7 +280,7 @@ df_f["Score_LU_raw"]  = role_score(df_f, ROLES["Link-Up CF"]["metrics"])
 df_f["Score_TM_raw"]  = role_score(df_f, ROLES["Target Man CF"]["metrics"])
 df_f["Score_ALL_raw"] = role_score(df_f, ROLES["All in"]["metrics"])
 
-# League-weighted (β from sidebar)
+# League-weighted by sidebar β
 ls = df_f["League Strength"].astype(float)
 df_f["Score_GT"]  = (1 - beta) * df_f["Score_GT_raw"]  + beta * ls
 df_f["Score_LU"]  = (1 - beta) * df_f["Score_LU_raw"]  + beta * ls
@@ -309,11 +309,10 @@ def rating_color(v: float) -> str:
             r,g,b = _lerp(c0, c1, t); return f"rgb({r},{g},{b})"
     r,g,b = PALETTE[-1][1]; return f"rgb({r},{g},{b})"
 
-# Position tag colors
+# Position chip colors
 POS_COLORS = {
-    # Primary
-    "CF": "#183153",                     # dark blue
-    # Blue group
+    "CF": "#183153",  # dark blue
+    # Blue family
     "LWF": "#1f3f8c","LW":"#1f3f8c","LAMF":"#1f3f8c","RW":"#1f3f8c","RWF":"#1f3f8c","RAMF":"#1f3f8c",
     # Light green / green
     "AMF":"#87d37c","LCMF":"#2ecc71","RCMF":"#2ecc71",
@@ -329,120 +328,114 @@ POS_COLORS = {
 def chip_color(pos_code: str) -> str:
     return POS_COLORS.get(pos_code.strip().upper(), "#2d3550")
 
-# Flags from Birth country (emoji)
+# Flags from Birth country → emoji (lightweight map)
 COUNTRY_TO_CC = {
-    "england":"GB", "scotland":"GB", "wales":"GB", "northern ireland":"GB",
-    "united kingdom":"GB", "great britain":"GB",
-    "republic of ireland":"IE", "ireland":"IE",
-    "spain":"ES","france":"FR","germany":"DE","italy":"IT","portugal":"PT","netherlands":"NL",
-    "belgium":"BE","austria":"AT","switzerland":"CH","denmark":"DK","sweden":"SE","norway":"NO",
+    # UK variants → GB flag
+    "england":"GB","scotland":"GB","wales":"GB","northern ireland":"GB",
+    "united kingdom":"GB","great britain":"GB","gb-eng":"GB","gb-sct":"GB","gb-wls":"GB","gb-nir":"GB",
+    # Europe
+    "ireland":"IE","republic of ireland":"IE","spain":"ES","france":"FR","germany":"DE","italy":"IT","portugal":"PT",
+    "netherlands":"NL","belgium":"BE","austria":"AT","switzerland":"CH","denmark":"DK","sweden":"SE","norway":"NO",
     "croatia":"HR","serbia":"RS","bosnia and herzegovina":"BA","slovenia":"SI","slovakia":"SK","czech republic":"CZ","czechia":"CZ",
-    "poland":"PL","romania":"RO","bulgaria":"BG","greece":"GR","hungary":"HU","turkey":"TR",
-    "brazil":"BR","argentina":"AR","uruguay":"UY","chile":"CL","colombia":"CO","peru":"PE","mexico":"MX",
-    "usa":"US","united states":"US","canada":"CA",
-    "russia":"RU","ukraine":"UA","georgia":"GE","kazakhstan":"KZ",
-    "japan":"JP","korea":"KR","south korea":"KR","china":"CN",
-    "australia":"AU","new zealand":"NZ",
-    "algeria":"DZ","morocco":"MA","tunisia":"TN","nigeria":"NG","ghana":"GH","egypt":"EG","ivory coast":"CI","cote d'ivoire":"CI","senegal":"SN",
-    "paraguay":"PY","venezuela":"VE","ecuador":"EC","bolivia":"BO","qatar":"QA","saudi arabia":"SA","iran":"IR","iraq":"IQ","israel":"IL",
-    "iceland":"IS","finland":"FI","estonia":"EE","latvia":"LV","lithuania":"LT","moldova":"MD","armenia":"AM","azerbaijan":"AZ",
-    "north macedonia":"MK","andorra":"AD","albania":"AL","malta":"MT","cyprus":"CY","luxembourg":"LU","monaco":"MC","san marino":"SM","montenegro":"ME","kosovo":"XK"
+    "poland":"PL","romania":"RO","bulgaria":"BG","greece":"GR","hungary":"HU","turkey":"TR","iceland":"IS","finland":"FI",
+    "estonia":"EE","latvia":"LV","lithuania":"LT","moldova":"MD","armenia":"AM","azerbaijan":"AZ","georgia":"GE",
+    "north macedonia":"MK","andorra":"AD","albania":"AL","malta":"MT","cyprus":"CY","luxembourg":"LU","monaco":"MC",
+    "san marino":"SM","montenegro":"ME","kosovo":"XK","ukraine":"UA","russia":"RU","belarus":"BY",
+    # Americas
+    "brazil":"BR","argentina":"AR","uruguay":"UY","chile":"CL","colombia":"CO","peru":"PE","mexico":"MX","paraguay":"PY",
+    "venezuela":"VE","ecuador":"EC","bolivia":"BO","canada":"CA","united states":"US","usa":"US","costa rica":"CR",
+    # Africa
+    "algeria":"DZ","morocco":"MA","tunisia":"TN","nigeria":"NG","ghana":"GH","egypt":"EG","ivory coast":"CI","cote d'ivoire":"CI",
+    "senegal":"SN","south africa":"ZA","cameroon":"CM","mali":"ML","guinea":"GN","burkina faso":"BF","gambia":"GM",
+    # Asia & Oceania
+    "japan":"JP","korea":"KR","south korea":"KR","republic of korea":"KR","north korea":"KP",
+    "china":"CN","australia":"AU","new zealand":"NZ","qatar":"QA","saudi arabia":"SA","iran":"IR","iraq":"IQ","israel":"IL",
+    "kazakhstan":"KZ","uzbekistan":"UZ","uae":"AE","united arab emirates":"AE"
 }
 def flag_emoji(country_name: str) -> str:
     n = (country_name or "").strip().lower()
     if not n:
         return ""
-    # handles 2/3-letter codes directly as well
-    if len(n) in (2,3) and n.isalpha():
-        cc = n[:2].upper()
-    else:
-        n2 = unicodedata.normalize("NFKD", n).encode("ascii","ignore").decode("ascii")
-        cc = COUNTRY_TO_CC.get(n) or COUNTRY_TO_CC.get(n2)
-        if not cc:
-            return ""
-    if len(cc) != 2:  # ignore unknowns or special cases
+    # normalize accents/punctuation
+    n2 = unicodedata.normalize("NFKD", n).encode("ascii","ignore").decode("ascii")
+    cc = COUNTRY_TO_CC.get(n) or COUNTRY_TO_CC.get(n2)
+    if not cc or len(cc) != 2:
         return ""
-    base = 127397
-    return chr(base + ord(cc[0])) + chr(base + ord(cc[1]))
-
-from textwrap import dedent
-import html
+    base = 127397  # regional indicator symbol base
+    return chr(base + ord(cc[0].upper())) + chr(base + ord(cc[1].upper()))
 
 # ----------------- RENDER -----------------
 for idx, row in ranked.iterrows():
     rank = idx + 1
-    player = html.escape(str(row.get("Player", "") or ""))
-    team = html.escape(str(row.get("Team", "") or ""))
+    player = str(row.get("Player", "")) or ""
+    team = str(row.get("Team", "")) or ""
     pos_full = str(row.get("Position", "")) or ""
     age = int(row.get("Age", 0)) if not pd.isna(row.get("Age", np.nan)) else 0
-    ce = pd.to_datetime(row.get("Contract expires"), errors="coerce")
-    contract_year = int(ce.year) if pd.notna(ce) else 0
+    cexp = pd.to_datetime(row.get("Contract expires"), errors="coerce")
+    contract_year = int(cexp.year) if not pd.isna(cexp) else 0
 
     gt_i = int(round(float(row["Score_GT"])))
     lu_i = int(round(float(row["Score_LU"])))
     tm_i = int(round(float(row["Score_TM"])))
 
-    birth_country = str(row.get("Birth country", "") or "")
-    flag = flag_emoji(birth_country)
+    # Left meta
+    flag = flag_emoji(str(row.get("Birth country", "") or ""))
 
-    # positions → colored chips (CF first if present)
+    # Position chips: keep CF first if present
     raw_codes = re.split(r"[,/; ]+", pos_full.strip().upper())
     codes = [c for c in raw_codes if c]
     if "CF" in codes:
         codes = ["CF"] + [c for c in codes if c != "CF"]
     chips_html = ""
-    seen = set()
+    shown = set()
     for c in codes:
-        if c in seen:
+        if c in shown:
             continue
-        seen.add(c)
-        chips_html += f"<span class='pos' style='background:{chip_color(c)}'>{html.escape(c)}</span> "
+        shown.add(c)
+        color = chip_color(c)
+        chips_html += f"<span class='pos' style='background:{color}'>{html.escape(c)}</span> "
 
-    def pill(v: int) -> str:
-        return f"background:{rating_color(v)};"
+    # pill colors
+    gt_style = f"background:{rating_color(gt_i)};"
+    lu_style = f"background:{rating_color(lu_i)};"
+    tm_style = f"background:{rating_color(tm_i)};"
 
-    card_html = dedent(f"""
+    team_html = html.escape(team)
+
+    st.markdown(f"""
     <div class='wrap'>
-    <div class='player-card'>
-    <div class='leftcol'>
-    <div class='avatar'></div>
-    <div class='row'>
-    <span class='chip'>{flag if flag else '—'}</span>
-    <span class='chip'>{age}y.o.</span>
-    </div>
-    <div class='row'>
-    <span class='chip'>{contract_year if contract_year>0 else '—'}</span>
-    </div>
-    </div>
-
-    <div>
-    <div class='name'>{player}</div>
-
-    <div class='row' style="align-items:center;">
-    <span class='pill' style='{pill(gt_i)}'>{gt_i}</span>
-    <span class='sub'>Goal Threat</span>
-    </div>
-
-    <div class='row' style="align-items:center;">
-    <span class='pill' style='{pill(lu_i)}'>{lu_i}</span>
-    <span class='sub'>Link-Up CF</span>
-    </div>
-
-    <div class='row' style="align-items:center;">
-    <span class='pill' style='{pill(tm_i)}'>{tm_i}</span>
-    <span class='sub'>Target Man CF</span>
-    </div>
-
-    <div class='row'>{chips_html}</div>
-    <div class='teamline'>{team}</div>
-    </div>
-
-    <div class='rank'>#{rank}</div>
-    </div>
+      <div class='player-card'>
+        <div class='leftcol'>
+          <div class='avatar'></div>
+          <div class='meta3'>
+            <span class='chip'>{flag if flag else '—'}</span>
+            <span class='chip'>{age}y.o.</span>
+            <span class='chip'>{contract_year if contract_year>0 else '—'}</span>
+          </div>
+        </div>
+        <div>
+          <div class='name'>{html.escape(player)}</div>
+          <div class='row' style='align-items:center;'>
+            <span class='pill' style='{gt_style}'>{gt_i}</span>
+            <span class='sub'>Goal Threat</span>
+          </div>
+          <div class='row' style='align-items:center;'>
+            <span class='pill' style='{lu_style}'>{lu_i}</span>
+            <span class='sub'>Link-Up CF</span>
+          </div>
+          <div class='row' style='align-items:center;'>
+            <span class='pill' style='{tm_style}'>{tm_i}</span>
+            <span class='sub'>Target Man CF</span>
+          </div>
+          <div class='row'>{chips_html}</div>
+          <div class='teamline'>{team_html}</div>
+        </div>
+        <div class='rank'>#{rank}</div>
+      </div>
     </div>
     <div class='divider'></div>
-    """)
-    st.markdown(card_html, unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
+
 
 
 
