@@ -1,4 +1,4 @@
-# app_top20_tiles.py — Top 20 Tiles (CF) with fixed image, colored role tags, emoji flags
+# app_top20_tiles.py — Top 20 Tiles (CF) with fixed image, colored role tags, flag images
 # Requirements: streamlit, pandas, numpy
 
 import io
@@ -17,7 +17,7 @@ st.set_page_config(page_title="Advanced Striker Scouting — Top 20 Tiles", layo
 st.title("🔎 Advanced Striker Scouting — Top 20 Tiles")
 st.caption(
     "Ranked by ‘All in’ (league-weighted). Pills show Goal Threat, Link-Up CF, Target Man CF. "
-    "Pool = Position starts with CF. Flag = Birth country. No team badges."
+    "Pool = Position starts with CF. Flag = Birth country (image). No team badges."
 )
 
 # ----------------- STYLE -----------------
@@ -28,7 +28,7 @@ st.markdown(
       .block-container { padding-top: 0.8rem; }
       body {
         background-color: var(--bg);
-        font-family: system-ui, -apple-system, "Segoe UI", "Segoe UI Emoji", Roboto, Helvetica, Arial, sans-serif;
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       }
       .wrap { display:flex; justify-content:center; }
       .player-card {
@@ -36,7 +36,7 @@ st.markdown(
         display:grid;
         grid-template-columns: 96px 1fr 48px; /* photo | content | rank */
         gap:12px;
-        align-items:flex-start;            /* <— align everything to the top */
+        align-items:flex-start;
         background:var(--card);
         border:1px solid #252b3a;
         border-radius:18px;
@@ -46,13 +46,24 @@ st.markdown(
         width:96px; height:96px; border-radius:12px;
         background:#0b0d12 url('https://i.redd.it/43axcjdu59nd1.jpeg') center/cover no-repeat;
         border:1px solid #2a3145;
-        margin-top:2px;                    /* small nudge up */
+        margin-top:2px;
       }
       .leftcol { display:flex; flex-direction:column; align-items:center; gap:8px; }
       .meta3 {
         display:grid;
-        grid-template-columns: repeat(3, max-content); /* fixed chip sizing across cards */
-        gap:8px; align-items:center;
+        grid-template-columns: repeat(3, max-content);
+        gap:8px; align-items:center; justify-items:center;
+      }
+      .flagchip {
+        background:var(--soft); border:1px solid #2d3550; border-radius:10px;
+        padding:2px 8px; min-width:46px; display:flex; align-items:center; justify-content:center;
+        height:24px;
+      }
+      .flagchip img { display:block; width:24px; height:18px; border-radius:3px; }
+      .chip {
+        background:var(--soft); color:#cbd5f5; border:1px solid #2d3550;
+        padding:3px 10px; border-radius:10px; font-size:13px; line-height:18px;
+        min-width:52px; text-align:center;
       }
       .name { font-weight:800; font-size:22px; color:#e8ecff; margin-bottom:6px; }
       .sub { color:#a8b3cf; font-size:15px; }
@@ -61,11 +72,6 @@ st.markdown(
         color:#0b0d12; display:inline-block; min-width:42px; text-align:center;
       }
       .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:4px 0; }
-      .chip {
-        background:var(--soft); color:#cbd5f5; border:1px solid #2d3550;
-        padding:3px 10px; border-radius:10px; font-size:13px; line-height:18px;
-        min-width:52px; text-align:center; /* keeps the 3-meta row aligned */
-      }
       .pos {
         color:#eaf0ff; font-weight:700; padding:4px 10px; border-radius:10px;
         font-size:12px; border:1px solid rgba(255,255,255,0.08);
@@ -339,45 +345,41 @@ POS_COLORS = {
 def chip_color(pos_code: str) -> str:
     return POS_COLORS.get(pos_code.strip().upper(), "#2d3550")
 
-# --- Flags from Birth country → emoji ---
+# --- Birth country → flag image chip ---
 COUNTRY_TO_CC = {
-    # UK variants → GB flag
-    "england":"GB","scotland":"GB","wales":"GB","northern ireland":"GB",
-    "united kingdom":"GB","great britain":"GB","gb-eng":"GB","gb-sct":"GB","gb-wls":"GB","gb-nir":"GB",
+    "england":"gb","scotland":"gb","wales":"gb","northern ireland":"gb",
+    "united kingdom":"gb","great britain":"gb","gb-eng":"gb","gb-sct":"gb","gb-wls":"gb","gb-nir":"gb",
     # Europe
-    "ireland":"IE","republic of ireland":"IE","spain":"ES","france":"FR","germany":"DE","italy":"IT","portugal":"PT",
-    "netherlands":"NL","belgium":"BE","austria":"AT","switzerland":"CH","denmark":"DK","sweden":"SE","norway":"NO",
-    "croatia":"HR","serbia":"RS","bosnia and herzegovina":"BA","slovenia":"SI","slovakia":"SK","czech republic":"CZ","czechia":"CZ",
-    "poland":"PL","romania":"RO","bulgaria":"BG","greece":"GR","hungary":"HU","iceland":"IS","finland":"FI",
-    "estonia":"EE","latvia":"LV","lithuania":"LT","moldova":"MD","armenia":"AM","azerbaijan":"AZ","georgia":"GE",
-    "north macedonia":"MK","andorra":"AD","albania":"AL","malta":"MT","cyprus":"CY","luxembourg":"LU","monaco":"MC",
-    "san marino":"SM","montenegro":"ME","kosovo":"XK","ukraine":"UA","russia":"RU","belarus":"BY",
+    "ireland":"ie","republic of ireland":"ie","spain":"es","france":"fr","germany":"de","italy":"it","portugal":"pt",
+    "netherlands":"nl","belgium":"be","austria":"at","switzerland":"ch","denmark":"dk","sweden":"se","norway":"no",
+    "croatia":"hr","serbia":"rs","bosnia and herzegovina":"ba","slovenia":"si","slovakia":"sk","czech republic":"cz","czechia":"cz",
+    "poland":"pl","romania":"ro","bulgaria":"bg","greece":"gr","hungary":"hu","iceland":"is","finland":"fi",
+    "estonia":"ee","latvia":"lv","lithuania":"lt","moldova":"md","armenia":"am","azerbaijan":"az","georgia":"ge",
+    "north macedonia":"mk","andorra":"ad","albania":"al","malta":"mt","cyprus":"cy","luxembourg":"lu","monaco":"mc",
+    "san marino":"sm","montenegro":"me","kosovo":"xk","ukraine":"ua","russia":"ru","belarus":"by",
     # Americas
-    "brazil":"BR","argentina":"AR","uruguay":"UY","chile":"CL","colombia":"CO","peru":"PE","mexico":"MX","paraguay":"PY",
-    "venezuela":"VE","ecuador":"EC","bolivia":"BO","canada":"CA","united states":"US","usa":"US","costa rica":"CR",
+    "brazil":"br","argentina":"ar","uruguay":"uy","chile":"cl","colombia":"co","peru":"pe","mexico":"mx","paraguay":"py",
+    "venezuela":"ve","ecuador":"ec","bolivia":"bo","canada":"ca","united states":"us","usa":"us","costa rica":"cr",
     # Africa
-    "algeria":"DZ","morocco":"MA","tunisia":"TN","nigeria":"NG","ghana":"GH","egypt":"EG","ivory coast":"CI","cote d'ivoire":"CI",
-    "senegal":"SN","south africa":"ZA","cameroon":"CM","mali":"ML","guinea":"GN","burkina faso":"BF","gambia":"GM",
+    "algeria":"dz","morocco":"ma","tunisia":"tn","nigeria":"ng","ghana":"gh","egypt":"eg","ivory coast":"ci","cote d'ivoire":"ci",
+    "senegal":"sn","south africa":"za","cameroon":"cm","mali":"ml","guinea":"gn","burkina faso":"bf","gambia":"gm",
     # Asia & Oceania
-    "japan":"JP","korea":"KR","south korea":"KR","republic of korea":"KR","north korea":"KP",
-    "china":"CN","australia":"AU","new zealand":"NZ","qatar":"QA","saudi arabia":"SA","iran":"IR","iraq":"IQ","israel":"IL",
-    "kazakhstan":"KZ","uzbekistan":"UZ","uae":"AE","united arab emirates":"AE"
+    "japan":"jp","korea":"kr","south korea":"kr","republic of korea":"kr","north korea":"kp",
+    "china":"cn","australia":"au","new zealand":"nz","qatar":"qa","saudi arabia":"sa","iran":"ir","iraq":"iq","israel":"il",
+    "kazakhstan":"kz","uzbekistan":"uz","uae":"ae","united arab emirates":"ae"
 }
-def flag_emoji(country_name: str) -> str:
-    """Return an emoji flag. Works for names AND two-letter alpha codes (e.g. 'GB', 'US')."""
-    if not country_name:
-        return ""
-    n = unicodedata.normalize("NFKD", str(country_name).strip().lower()).encode("ascii","ignore").decode("ascii")
-    cc = None
-    # map by name
-    cc = COUNTRY_TO_CC.get(n)
-    # if already alpha-2 like 'gb' / 'us', accept directly
-    if not cc and len(n) == 2 and n.isalpha():
-        cc = n.upper()
-    if not cc:
-        return ""
-    base = 127397
-    return chr(base + ord(cc[0].upper())) + chr(base + ord(cc[1].upper()))
+def to_cc(country: str) -> str | None:
+    if not country: return None
+    n = unicodedata.normalize("NFKD", str(country).strip().lower()).encode("ascii","ignore").decode("ascii")
+    if len(n) == 2 and n.isalpha():  # already ISO-2
+        return n.lower()
+    return COUNTRY_TO_CC.get(n)
+
+def flag_img(country: str) -> str:
+    cc = to_cc(country)
+    if not cc: return "—"
+    # Fast, free flag CDN (no attribution needed): 24x18 PNG
+    return f"<img src='https://flagcdn.com/24x18/{cc}.png' alt='{html.escape(country)}' width='24' height='18'/>"
 
 # ----------------- RENDER -----------------
 for idx, row in ranked.iterrows():
@@ -393,8 +395,6 @@ for idx, row in ranked.iterrows():
     lu_i = int(round(float(row["Score_LU"])))
     tm_i = int(round(float(row["Score_TM"])))
 
-    flag = flag_emoji(row.get("Birth country", ""))
-
     # Position chips: keep CF first if present
     raw_codes = re.split(r"[,/; ]+", pos_full.strip().upper())
     codes = [c for c in raw_codes if c]
@@ -405,8 +405,7 @@ for idx, row in ranked.iterrows():
     for c in codes:
         if c in shown: continue
         shown.add(c)
-        color = chip_color(c)
-        chips_html += f"<span class='pos' style='background:{color}'>{html.escape(c)}</span> "
+        chips_html += f"<span class='pos' style='background:{chip_color(c)}'>{html.escape(c)}</span> "
 
     gt_style = f"background:{rating_color(gt_i)};"
     lu_style = f"background:{rating_color(lu_i)};"
@@ -418,7 +417,7 @@ for idx, row in ranked.iterrows():
         <div class='leftcol'>
           <div class='avatar'></div>
           <div class='meta3'>
-            <span class='chip'>{flag if flag else '—'}</span>
+            <span class='flagchip'>{flag_img(row.get("Birth country", ""))}</span>
             <span class='chip'>{age}y.o.</span>
             <span class='chip'>{contract_year if contract_year>0 else '—'}</span>
           </div>
@@ -449,6 +448,7 @@ for idx, row in ranked.iterrows():
     </div>
     <div class='divider'></div>
     """, unsafe_allow_html=True)
+
 
 
 
