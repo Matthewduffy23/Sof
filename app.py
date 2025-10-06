@@ -32,12 +32,12 @@ st.markdown("""
   .meta3{ display:grid; grid-template-columns: repeat(3, auto); gap:8px; align-items:center; }
   .name{ font-weight:800; font-size:24px; color:#e8ecff; margin-bottom:6px; }
   .sub{ color:#a8b3cf; font-size:15px; }
-  .pill{ padding:1.5px 7px; border-radius:9px; font-weight:800; font-size:15px; color:#0b0d12; display:inline-block; min-width:42px; text-align:center; }
+  .pill{ padding:1.5px 5px; border-radius:9px; font-weight:800; font-size:14px; color:#0b0d12; display:inline-block; min-width:42px; text-align:center; }
   .row{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:4px 0; }
   .chip{ background:var(--soft); color:#cbd5f5; border:1px solid #2d3550; padding:3px 10px; border-radius:10px; font-size:13px; line-height:18px; }
   .flagchip{ display:inline-flex; align-items:center; gap:6px; background:var(--soft); color:#cbd5f5; border:1px solid #2d3550; padding:2px 8px; border-radius:10px; font-size:13px; line-height:18px; height:22px;}
   .flagchip img{ width:18px; height:14px; border-radius:2px; display:block; }
-  .pos{ color:#eaf0ff; font-weight:700; padding:4px 10px; border-radius:10px; font-size:12px; border:1px solid rgba(255,255,255,.08); }
+  .pos{ color:#eaf0ff; font-weight:700; padding:3px 8px; border-radius:10px; font-size:12px; border:1px solid rgba(255,255,255,.08); }
   .teamline{ color:#e6ebff; font-size:15px; font-weight:400; margin-top:2px; }
   .rank{ color:#94a0c6; font-weight:800; font-size:18px; text-align:right; }
   .divider{ height:12px; }
