@@ -41,6 +41,15 @@ st.markdown("""
   .teamline{ color:#e6ebff; font-size:15px; font-weight:400; margin-top:2px; }
   .rank{ color:#94a0c6; font-weight:800; font-size:18px; text-align:right; }
   .divider{ height:12px; }
+    /* Custom tweaks: position row + team line spacing */
+  .row.position-row {
+    margin-top: 6px;    /* push position chips slightly down */
+  }
+
+  .teamline {
+    margin-top: 8px;    /* push team name down slightly */
+  }
+
 </style>
 """, unsafe_allow_html=True)
 
