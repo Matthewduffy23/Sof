@@ -137,7 +137,11 @@ with st.sidebar:
     if use_top20: seed |= PRESET_LEAGUES["Top 20 Europe"]
     if use_efl:   seed |= PRESET_LEAGUES["EFL (England 2–4)"]
 
-    leagues_avail = sorted(set(INCLUDED_LEAGUES) | set(df.get("League", pd.Series(dtype=object))).dropna().unique())
+    # AFTER (works)
+    leagues_avail = sorted(
+    set(INCLUDED_LEAGUES)
+    | set(pd.Series(df.get("League", pd.Series(dtype=object))).dropna().unique())
+    )
     default_leagues = sorted(seed) if seed else INCLUDED_LEAGUES
     leagues_sel = st.multiselect("Leagues (add or prune the presets)", leagues_avail, default=default_leagues)
 
