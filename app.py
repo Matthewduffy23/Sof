@@ -24,18 +24,18 @@ st.markdown(
     .block-container { padding-top: 0.8rem; }
     body { background-color: var(--bg); }
     .wrap { display:flex; justify-content:center; }
-    .player-card { width:min(880px, 96%); display:grid; grid-template-columns: 96px 1fr; gap:14px; align-items:center; background:var(--card); border:1px solid #252b3a; border-radius:18px; padding:16px; }
-    .avatar { width:96px; height:96px; border-radius:12px; object-fit:cover; background:#0b0d12; border:1px solid #2a3145; }
-    .name { font-weight:800; font-size:21px; color:#e8ecff; }
-    .sub { color:var(--muted); font-size:13px; }
-    .pill { padding:3px 10px; border-radius:9px; font-weight:800; font-size:16px; color:#0b0d12; }
-    .pill-gray { background:#2b3247; color:#d7dcf0; padding:3px 10px; border-radius:9px; font-weight:700; font-size:16px; }
-    .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-    .rank { color:#94a0c6; font-weight:800; font-size:18px; margin-right:8px; }
-    .chip { background:var(--soft); color:#cbd5f5; border:1px solid #2d3550; padding:3px 10px; border-radius:9px; font-size:12px; }
+    .player-card { width:min(820px, 96%); display:grid; grid-template-columns: 110px 1fr 56px; gap:12px; align-items:center; background:var(--card); border:1px solid #252b3a; border-radius:18px; padding:16px; }
+    .avatar { width:110px; height:110px; border-radius:12px; object-fit:cover; background:#0b0d12; border:1px solid #2a3145; }
+    .name { font-weight:800; font-size:22px; color:#e8ecff; margin-bottom:6px; }
+    .sub { color:var(--muted); font-size:15px; }
+    .pill { padding:2px 10px; border-radius:9px; font-weight:800; font-size:18px; color:#0b0d12; display:inline-block; min-width:42px; text-align:center; }
+    .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin:4px 0; }
+    .rank { color:#94a0c6; font-weight:800; font-size:18px; text-align:right; }
+    .chip { background:var(--soft); color:#cbd5f5; border:1px solid #2d3550; padding:3px 10px; border-radius:9px; font-size:13px; }
     .leftcol { display:flex; flex-direction:column; align-items:center; gap:8px; }
     .divider { height:12px; }
-    </style>
+    .teamline { color:#e6ebff; font-size:18px; font-weight:700; margin-top:2px; }
+</style>
     """,
     unsafe_allow_html=True,
 )
@@ -304,7 +304,6 @@ for idx, row in ranked.iterrows():
     player = str(row.get("Player", ""))
     surname = player.split()[-1] if player else ""
     team = str(row.get("Team", ""))
-    league = str(row.get("League", ""))
     pos = str(row.get("Position", ""))
     age = int(row.get("Age", 0)) if not pd.isna(row.get("Age", np.nan)) else 0
     overall = float(row["Overall Rating"]) if not pd.isna(row["Overall Rating"]) else 0
@@ -316,7 +315,6 @@ for idx, row in ranked.iterrows():
 
     img_url_try = guess_fotmob_url(team, surname)
 
-    # Build colored styles
     ov_style = f"background:{rating_color(overall_i)};"
     po_style = f"background:{rating_color(potential_i)};"
 
@@ -324,8 +322,7 @@ for idx, row in ranked.iterrows():
     <div class='wrap'>
       <div class='player-card'>
         <div class='leftcol'>
-          <div class='rank'>#{rank}</div>
-          <img class='avatar' src='{img_url_try}' onerror="this.onerror=null;this.src='{FALLBACK_URL}';" />
+          <img class='avatar' src='{img_url_try}' onerror=\"this.onerror=null;this.src='{FALLBACK_URL}';\" />
           <div class='row'>
             <span class='chip'>{age} y.o.</span>
             <span class='chip'>{contract_year if contract_year>0 else '—'}</span>
@@ -333,22 +330,25 @@ for idx, row in ranked.iterrows():
         </div>
         <div>
           <div class='name'>{player}</div>
-          <div class='row' style='margin-top:6px;'>
-            <span class='pill' style='{ov_style}'> {int(round(overall))} </span>
-            <span class='sub'>Overall</span>
-            <span class='pill' style='{po_style}'> {int(round(potential))} </span>
+          <div class='row'>
+            <span class='pill' style='{ov_style}'>{overall_i}</span>
+            <span class='sub'>Overall rating</span>
+          </div>
+          <div class='row'>
+            <span class='pill' style='{po_style}'>{potential_i}</span>
             <span class='sub'>Potential</span>
+          </div>
+          <div class='row'>
             <span class='chip'>{pos}</span>
-            <span class='chip'>{team}</span>
           </div>
-          <div class='row' style='margin-top:6px;'>
-            <span class='chip'>{league}</span>
-          </div>
+          <div class='teamline'>{team}</div>
         </div>
+        <div class='rank'>#{rank}</div>
       </div>
     </div>
     <div class='divider'></div>
     """, unsafe_allow_html=True)
+
 
 
 
