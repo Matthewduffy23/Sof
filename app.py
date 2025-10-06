@@ -1,4 +1,4 @@
-# app_top20_tiles.py — Top 20 Tiles (final)
+# app_top20_tiles.py — Top 20 Tiles (live FotMob resolver, Sofifa colors)
 # Requirements: streamlit, pandas, numpy, requests
 
 import os
@@ -16,7 +16,7 @@ import numpy as np
 # ----------------- PAGE -----------------
 st.set_page_config(page_title="Advanced Striker Scouting — Top 20 Tiles", layout="wide")
 st.title("🔎 Advanced Striker Scouting — Top 20 Tiles")
-st.caption("Overall = league-weighted combined-role score. Potential = Overall + age bonus. (Photos resolved via FotMob; fallback image always shown.)")
+st.caption("Overall = league-weighted combined-role score. Potential = Overall + age bonus. Photos resolved live via FotMob; fallback always shown.")
 
 # ----------------- STYLE -----------------
 st.markdown(
@@ -273,54 +273,85 @@ df_f["Contract Year"] = pd.to_datetime(df_f["Contract expires"], errors="coerce"
 # ----------------- Top N -----------------
 ranked = df_f.sort_values("Overall Rating", ascending=False).head(int(top_n)).copy().reset_index(drop=True)
 
-# ----------------- Image helpers -----------------
+# ----------------- Image resolver (surname + team → FotMob ID) -----------------
 FALLBACK_URL = "https://i.redd.it/43axcjdu59nd1.jpeg"
+
+def _norm(s: str) -> str:
+    s = (s or "").strip()
+    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
+    return s.lower()
 
 @st.cache_data(show_spinner=False, ttl=60*60*24)
 def fotmob_search(query: str) -> dict | None:
-    """Call FotMob's public search API. Returns JSON or None."""
+    """Call FotMob’s public search API with UA; return JSON or None (cached 24h)."""
+    if not query:
+        return None
     try:
-        r = requests.get("https://www.fotmob.com/api/search", params={"q": query}, timeout=6)
+        r = requests.get(
+            "https://www.fotmob.com/api/search",
+            params={"q": query},
+            headers={"User-Agent": "Mozilla/5.0 (tiles-app)"},
+            timeout=6,
+        )
         if r.ok:
             return r.json()
     except Exception:
         return None
     return None
 
-def _norm(s: str) -> str:
-    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
-    return s.lower().strip()
+def _score_match(player_q: str, team_q: str | None, name: str, team: str) -> int:
+    score = 0
+    if player_q and (player_q in name or name in player_q): score += 4
+    pq_last = player_q.split()[-1] if player_q else ""
+    if pq_last and pq_last in name: score += 2
+    if team_q and team_q in team:  score += 3
+    return score
 
-def resolve_fotmob_id(player_name: str, team_name: str | None = None) -> str | None:
+def resolve_fotmob_id_by_surname_and_team(player_name: str, team_name: str | None = None) -> str | None:
+    """
+    Prefer searching 'surname team', then 'player team', then 'player'.
+    Picks best match by name+team scoring. Returns numeric id or None.
+    """
     if not player_name:
         return None
-    data = fotmob_search(player_name)
-    if not data or "players" not in data:
-        return None
+    # Extract surname (last token once initials removed)
+    pn_raw = player_name.replace(".", " ").strip()
+    surname = pn_raw.split()[-1] if pn_raw else ""
+    tn_raw = (team_name or "").strip()
 
-    pn = _norm(player_name.replace(".", ""))  # 'H. Wright' -> 'h wright'
-    tn = _norm(team_name) if team_name else None
+    queries = [
+        f"{surname} {tn_raw}".strip(),
+        f"{pn_raw} {tn_raw}".strip(),
+        pn_raw.strip(),
+    ]
 
-    best, best_score = None, -1
-    for p in data.get("players", []):
-        name = _norm(p.get("name", ""))
-        team = _norm(p.get("teamName", ""))
-        pid  = p.get("id")
-        score = 0
-        if pn in name or name in pn: score += 2
-        if pn.split()[-1] in name:  score += 1  # surname match
-        if tn and tn in team:       score += 2
-        if score > best_score:
-            best_score, best = score, pid
-    return str(best) if best is not None else None
+    best_id, best_score = None, -1
+    player_q = _norm(pn_raw)
+    team_q = _norm(tn_raw) if tn_raw else None
+
+    for q in queries:
+        data = fotmob_search(q)
+        if not data:
+            continue
+        for p in data.get("players", []):
+            name = _norm(p.get("name", ""))
+            team = _norm(p.get("teamName", ""))
+            pid  = p.get("id")
+            s = _score_match(player_q, team_q, name, team)
+            if s > best_score:
+                best_score, best_id = s, pid
+        if best_id is not None and best_score >= 5:
+            break  # good enough match
+
+    return str(best_id) if best_id is not None else None
 
 def fotmob_player_image_url(player_name: str, team_name: str | None = None) -> str | None:
-    pid = resolve_fotmob_id(player_name, team_name)
+    pid = resolve_fotmob_id_by_surname_and_team(player_name, team_name)
     if not pid:
         return None
     return f"https://images.fotmob.com/image_resources/playerimages/{pid}.png"
 
-# SoFIFA-style colors
+# ----------------- Sofifa-style colors -----------------
 PALETTE = [
     (0,   (208,  2, 27)),   # red
     (50,  (245,166, 35)),   # orange
@@ -350,7 +381,7 @@ for idx, row in ranked.iterrows():
     potential_i = int(round(float(row["Potential"])))
     contract_year = int(row.get("Contract Year", 0))
 
-    # Try FotMob (ID-based); otherwise fallback
+    # Primary = FotMob photo (resolved live) OR fallback; CSS ensures fallback displays if primary 404s
     primary = fotmob_player_image_url(player_name=player, team_name=team) or FALLBACK_URL
     avatar_style = f"background-image: url('{primary}'), url('{FALLBACK_URL}');"
 
@@ -387,6 +418,7 @@ for idx, row in ranked.iterrows():
     </div>
     <div class='divider'></div>
     """, unsafe_allow_html=True)
+
 
 
 
