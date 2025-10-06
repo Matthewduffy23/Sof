@@ -1,23 +1,20 @@
-# app.py — Advanced Striker Scouting + Dark Tiles + FotMob headshots (surname+team)
-# Requirements: streamlit, pandas, numpy, matplotlib, requests
+# app.py — Advanced Striker Scouting + Tiles (single-card) + robust FotMob headshots
+# Requires: streamlit, pandas, numpy, matplotlib, requests
 
-import io
-import math
-import re
-import unicodedata
+import os, io, math, re, unicodedata, json
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
 import requests
 import streamlit as st
+import pandas as pd
+import numpy as np
 
 # ----------------- PAGE -----------------
 st.set_page_config(page_title="Advanced Striker Scouting System", layout="wide")
 st.title("🔎 Advanced Striker Scouting System")
-st.caption("Use the sidebar to shape your pool. Tables + Tiles with FotMob headshots.")
+st.caption("Tables + dark Tiles with FotMob headshots (surname + team). Potential = Role Score.")
 
-# ----------------- CONFIG -----------------
+# ----------------- CONFIG (same as before; trimmed here for brevity) -----------------
 INCLUDED_LEAGUES = [
     'England 1.','England 2.','England 3.','England 4.','England 5.',
     'England 6.','England 7.','England 8.','England 9.','England 10.',
@@ -65,19 +62,25 @@ FEATURES = [
 ]
 
 ROLES = {
-    'Target Man CF': {'desc': "Aerial outlet, duel dominance, occupy CBs, threaten crosses & second balls.",
-                      'metrics': {'Aerial duels per 90': 3, 'Aerial duels won, %': 4}},
-    'Goal Threat CF': {'desc': "High shot & xG volume, box presence, consistent SoT and finishing.",
-                       'metrics': {'Non-penalty goals per 90': 3, 'Shots per 90': 1.5, 'xG per 90': 3,
-                                   'Touches in box per 90': 1, 'Shots on target, %': 0.5}},
-    'Link-Up CF': {'desc': "Combine & create; link play; progress & deliver to the penalty area.",
-                   'metrics': {'Passes per 90': 2,'Passes to penalty area per 90': 1.5,
-                               'Deep completions per 90': 1,'Smart passes per 90': 1.5,
-                               'Accurate passes, %': 1.5,'Key passes per 90': 1,
-                               'Dribbles per 90': 2,'Successful dribbles, %': 1,
-                               'Progressive runs per 90': 2,'xA per 90': 3}},
-    'All in': {'desc': "Blend of creation + scoring; balanced all-round attacking profile.",
-               'metrics': {'xA per 90': 2,'Dribbles per 90': 2,'xG per 90': 3,'Non-penalty goals per 90': 3}}
+    'Target Man CF': {
+        'desc': "Aerial outlet, duel dominance, occupy CBs, threaten crosses & second balls.",
+        'metrics': {'Aerial duels per 90': 3, 'Aerial duels won, %': 4}
+    },
+    'Goal Threat CF': {
+        'desc': "High shot & xG volume, box presence, consistent SoT and finishing.",
+        'metrics': {'Non-penalty goals per 90': 3,'Shots per 90': 1.5,'xG per 90': 3,
+                    'Touches in box per 90': 1,'Shots on target, %': 0.5}
+    },
+    'Link-Up CF': {
+        'desc': "Combine & create; link play; progress & deliver to the penalty area.",
+        'metrics': {'Passes per 90': 2,'Passes to penalty area per 90': 1.5,'Deep completions per 90': 1,
+                    'Smart passes per 90': 1.5,'Accurate passes, %': 1.5,'Key passes per 90': 1,
+                    'Dribbles per 90': 2,'Successful dribbles, %': 1,'Progressive runs per 90': 2,'xA per 90': 3}
+    },
+    'All in': {
+        'desc': "Blend of creation + scoring; balanced all-round attacking profile.",
+        'metrics': {'xA per 90': 2,'Dribbles per 90': 2,'xG per 90': 3,'Non-penalty goals per 90': 3}
+    }
 }
 
 LEAGUE_STRENGTHS = {
@@ -126,7 +129,6 @@ def load_df(csv_name: str = "WORLDJUNE25.csv") -> pd.DataFrame:
     for p in candidates:
         if p.exists():
             return _read_csv_from_path(str(p))
-
     st.warning(f"Could not find **{csv_name}**. Please upload the CSV below.")
     up = st.file_uploader("Upload WORLDJUNE25.csv", type=["csv"])
     if up is None:
@@ -135,7 +137,7 @@ def load_df(csv_name: str = "WORLDJUNE25.csv") -> pd.DataFrame:
 
 df = load_df()
 
-# ----------------- SIDEBAR FILTERS -----------------
+# ----------------- SIDEBAR -----------------
 with st.sidebar:
     st.header("Filters")
     c1, c2, c3 = st.columns([1,1,1])
@@ -155,10 +157,9 @@ with st.sidebar:
     # numeric coercions
     df["Minutes played"] = pd.to_numeric(df["Minutes played"], errors="coerce")
     df["Age"] = pd.to_numeric(df["Age"], errors="coerce")
-    min_minutes, max_minutes = st.slider("Minutes played", 0, 5000, (500, 5000))
-    age_min_data = int(np.nanmin(df["Age"])) if df["Age"].notna().any() else 14
-    age_max_data = int(np.nanmax(df["Age"])) if df["Age"].notna().any() else 45
-    min_age, max_age = st.slider("Age", age_min_data, age_max_data, (16, 40))
+    st.slider("Minutes played", 0, 5000, (500, 5000), key="minmax_minutes")
+    st.slider("Age", int(np.nanmin(df["Age"])) if df["Age"].notna().any() else 14,
+              int(np.nanmax(df["Age"])) if df["Age"].notna().any() else 45, (16, 40), key="minmax_age")
 
     st.subheader("Position filter")
     st.caption("Players whose Position text starts with this (case-insensitive).")
@@ -167,7 +168,7 @@ with st.sidebar:
     apply_contract = st.checkbox("Filter by contract expiry", value=False)
     cutoff_year = st.slider("Max contract year (inclusive)", 2025, 2030, 2026)
 
-    min_strength, max_strength = st.slider("League quality (strength)", 0, 101, (0, 101))
+    st.slider("League quality (strength)", 0, 101, (0, 101), key="minmax_strength")
     use_league_weighting = st.checkbox("Use league weighting in role score", value=False)
     beta = st.slider("League weighting beta", 0.0, 1.0, 0.40, 0.05,
                      help="0 = ignore league strength; 1 = only league strength")
@@ -198,6 +199,11 @@ with st.sidebar:
     top_n = st.number_input("Top N per table", 5, 200, 50, 5)
     round_to = st.selectbox("Round output percentiles to", [0, 1], index=0)
 
+# handy getters from sliders
+min_minutes, max_minutes = st.session_state["minmax_minutes"]
+min_age, max_age = st.session_state["minmax_age"]
+min_strength, max_strength = st.session_state["minmax_strength"]
+
 # ----------------- VALIDATION -----------------
 missing = [c for c in REQUIRED_BASE if c not in df.columns]
 if missing:
@@ -208,7 +214,7 @@ if missing_feats:
     st.error(f"Dataset missing required feature columns: {missing_feats}")
     st.stop()
 
-# -------- Position filter --------
+# -------- Position filter helper --------
 def position_filter(pos):
     return str(pos).strip().upper().startswith(str(pos_text).upper())
 
@@ -289,85 +295,112 @@ def filtered_view(df_in: pd.DataFrame, *, age_max=None, contract_year=None, valu
     if value_max is not None: t = t[t["Market value"] <= value_max]
     return t
 
-# ----------------- FOTMOB LOOKUP (surname + team) -----------------
+# ----------------- STRONG FOTMOB LOOKUP (surname + team) -----------------
+FALLBACK_IMG = "https://i.redd.it/43axcjdu59nd1.jpeg"  # your requested fallback
+
 def _strip_accents(s: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFKD", str(s)) if not unicodedata.combining(c))
-
 def _canon(s: str) -> str:
     s = _strip_accents(s).lower()
     return re.sub(r"[^a-z0-9]+", " ", s).strip()
+def _surname(full: str) -> str:
+    s = str(full).strip()
+    if "." in s:  # e.g., "C. Morris"
+        s = s.split(".")[-1].strip()
+    parts = s.split()
+    return parts[-1] if parts else s
 
-def _surname(full_name: str) -> str:
-    # Handles "C. Morris", "Carlton Morris", "B. Osayi-Samuel" -> "morris", "morris", "osayi samuel"
-    s = _strip_accents(full_name).strip()
-    parts = re.split(r"\s+", s.replace("·", " ").replace(",", " "))
-    # drop first token if it's an initial like "C." or "C"
-    if parts and re.fullmatch(r"[A-Za-z]\.?", parts[0]):
-        parts = parts[1:]
-    if not parts:
-        return _canon(full_name)
-    # surname = everything after first token (to keep double-barrel)
-    if len(parts) >= 2:
-        surname = " ".join(parts[1:])
-    else:
-        surname = parts[0]
-    return _canon(surname)
+def _similar(a: str, b: str) -> float:
+    ta, tb = set(_canon(a).split()), set(_canon(b).split())
+    if not ta or not tb: return 0.0
+    return len(ta & tb) / len(ta | tb)
 
-TEAM_ALIASES = {
-    "man utd": "manchester united",
-    "psg": "paris saint germain",
-    "inter": "internazionale",
-    "sheff wed": "sheffield wednesday",
-    "sheff utd": "sheffield united",
-    # add as needed
-}
+HEADERS = {"User-Agent":"Mozilla/5.0 (compatible; scouting-app/1.0)"}
 
-FALLBACK_IMG = "https://i.redd.it/43axcjdu59nd1.jpeg"
-
-HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; ScoutApp/1.0)"}
-
-@st.cache_data(show_spinner=False, ttl=60*60)
-def fotmob_image_url(player_name: str, team_name: str | None = None) -> str | None:
+@st.cache_data(show_spinner=False, ttl=60*60*12)
+def _http_json(url: str):
     try:
-        sname = _surname(player_name)
-        if not sname:
-            return None
-        team_norm = _canon(TEAM_ALIASES.get(_canon(team_name or ""), team_name or ""))
-        q = requests.utils.quote(f"{sname} {team_norm}".strip())
-        r = requests.get(f"https://www.fotmob.com/api/search?q={q}", headers=HEADERS, timeout=6)
-        if r.status_code != 200:
-            return None
-        js = r.json()
-        players = js.get("players") or []
-        if not players:
-            return None
-
-        # Score candidates by (surname match + team overlap)
-        def score(c):
-            cname = _canon(c.get("name", ""))
-            cteam = _canon(c.get("team", {}).get("name", ""))
-            surname_match = 1.0 if sname in cname or cname.endswith(sname) else 0.0
-            team_overlap = 0.0
-            if team_norm:
-                ta, tb = set(team_norm.split()), set(cteam.split())
-                if ta and tb:
-                    team_overlap = len(ta & tb) / len(ta | tb)
-            return surname_match * 0.7 + team_overlap * 0.3
-
-        best = max(players, key=score)
-        if score(best) < 0.3:  # weak match
-            return None
-        pid = best.get("id")
-        if not pid:
-            return None
-        url = f"https://images.fotmob.com/image_resources/playerimages/{pid}.png"
-        hr = requests.head(url, headers=HEADERS, timeout=6)
-        return url if hr.status_code == 200 else None
+        r = requests.get(url, headers=HEADERS, timeout=6)
+        if r.status_code == 200:
+            return r.json()
     except Exception:
-        return None
+        pass
+    return None
+
+@st.cache_data(show_spinner=False, ttl=60*60*24)
+def _url_exists(url: str) -> bool:
+    try:
+        h = requests.head(url, headers=HEADERS, timeout=6)
+        return h.status_code == 200
+    except Exception:
+        return False
+
+@st.cache_data(show_spinner=False, ttl=60*60*12)
+def fotmob_headshot_by_surname_and_team(player_display: str, team_name: str) -> str | None:
+    """
+    1) Search team -> teamId -> pull roster -> match surname
+    2) Else search players -> soft-match by team
+    """
+    try:
+        target_team = _canon(team_name)
+        target_surname = _canon(_surname(player_display))
+
+        # -- Step 1: team search
+        js = _http_json(f"https://www.fotmob.com/api/search?q={requests.utils.quote(team_name)}")
+        if js and js.get("teams"):
+            teams = js["teams"]
+            teams_scored = sorted((( _similar(t.get("name",""), target_team), t ) for t in teams),
+                                  key=lambda x: x[0], reverse=True)
+            if teams_scored and teams_scored[0][0] >= 0.6:
+                team_id = teams_scored[0][1].get("id")
+                if team_id:
+                    team_js = _http_json(f"https://www.fotmob.com/api/teams?id={team_id}")
+                    if team_js:
+                        # squads live under various keys; flatten
+                        players = []
+                        for key in ("players","squad","mainSquad","squadPlayers","u21","u23","u19","firstTeam"):
+                            if key in team_js and isinstance(team_js[key], list):
+                                players.extend(team_js[key])
+                        # some structures: {'name':..,'id':..}, others nested under dict['players']
+                        flat = []
+                        for p in players:
+                            if isinstance(p, dict) and "name" in p and "id" in p:
+                                flat.append(p)
+                            elif isinstance(p, dict) and "players" in p and isinstance(p["players"], list):
+                                for q in p["players"]:
+                                    if isinstance(q, dict) and "name" in q and "id" in q:
+                                        flat.append(q)
+                        # match by surname
+                        for p in flat:
+                            if _canon(_surname(p.get("name",""))) == target_surname:
+                                pid = p.get("id")
+                                url = f"https://images.fotmob.com/image_resources/playerimages/{pid}.png"
+                                if _url_exists(url):
+                                    return url
+        # -- Step 2: player search (surname) then match by team
+        js2 = _http_json(f"https://www.fotmob.com/api/search?q={requests.utils.quote(_surname(player_display))}")
+        if js2 and js2.get("players"):
+            cand = js2["players"]
+            # score by team match first, then by exact surname
+            scored = []
+            for c in cand:
+                team = c.get("team",{}).get("name","")
+                s1 = _similar(team, target_team)
+                s2 = 1.0 if _canon(_surname(c.get("name",""))) == target_surname else 0.0
+                scored.append((s1 + 0.25*s2, c))
+            scored.sort(key=lambda x: x[0], reverse=True)
+            if scored:
+                pid = scored[0][1].get("id")
+                if pid:
+                    url = f"https://images.fotmob.com/image_resources/playerimages/{pid}.png"
+                    if _url_exists(url):
+                        return url
+    except Exception:
+        pass
+    return None
 
 # ----------------- TABS -----------------
-tabs = st.tabs(["Overall Top N", "U23 Top N", "Expiring Contracts", "Value Band (≤ max €)", "Tiles (Top 10 per role)"])
+tabs = st.tabs(["Overall Top N","U23 Top N","Expiring Contracts","Value Band (≤ max €)","Tiles (Top 10 per role)"])
 for role, role_def in ROLES.items():
     with tabs[0]:
         st.subheader(f"{role} — Overall Top {int(top_n)}")
@@ -393,24 +426,36 @@ for role, role_def in ROLES.items():
         st.dataframe(top_table(filtered_view(df_f, value_max=v_max), role, int(top_n)), use_container_width=True)
         st.divider()
 
-# ----------------- DARK TILE CSS -----------------
-tile_css = """
+# ----------------- GLOBAL CSS FOR DARK TILES -----------------
+TILE_CSS = """
 <style>
-.scout-tile{background:#191c22;border-radius:18px;padding:16px 18px;display:flex;gap:16px;align-items:center;box-shadow:0 2px 10px rgba(0,0,0,.25)}
-.scout-rank{color:#9ba3af;font-size:.9rem}
-.scout-name{font-weight:700;font-size:1.05rem;color:#eef2f7;margin-bottom:4px}
-.scout-team{font-weight:600;color:#cdd3dd}
-.scout-meta{color:#98a1ae;font-size:.9rem}
-.badge-num{background:#1f6e3a;color:#fff;padding:6px 8px;border-radius:8px;font-weight:800;min-width:34px;text-align:center}
-.badge-label{background:#3b4151;color:#fff;padding:6px 8px;border-radius:8px}
+.card {
+  background: #1f232b; border-radius: 18px; padding: 18px 20px; color: #eef1f5;
+  display: flex; align-items: center; gap: 16px; position: relative;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.25);
+}
+.card + .card { margin-top: 14px; }
+.card .rank {
+  position: absolute; right: 16px; top: 10px; color: #9aa3b2; font-size: 0.9rem;
+}
+.photo { width: 72px; height: 72px; border-radius: 12px; background: #2a2f39; overflow: hidden; flex-shrink: 0; }
+.meta  { display:flex; flex-direction: column; gap: 6px; }
+.name  { font-weight: 700; font-size: 1.05rem; line-height: 1.1; }
+.team  { color: #cfd6e1; font-weight: 600; }
+.sub   { color:#9aa3b2; font-size: 0.92rem; }
+.badges{ display:flex; gap:10px; align-items:center; margin-top: 6px;}
+.badgeNum { background:#1b6a36; color:#fff; padding:6px 10px; border-radius:10px; font-weight:700; }
+.badgeLbl { background:#3b4151; color:#fff; padding:6px 10px; border-radius:10px; }
+.photo img{ width:100%; height:100%; object-fit:cover; display:block; }
 </style>
 """
-st.markdown(tile_css, unsafe_allow_html=True)
+st.markdown(TILE_CSS, unsafe_allow_html=True)
 
 # ----------------- TILES VIEW -----------------
 with tabs[4]:
     st.subheader("Player Tiles — Top 10 per role")
     st.caption("Headshots via FotMob by surname + team. Potential = Role Score.")
+
     for role, role_def in ROLES.items():
         score_col = f"{role} Score"
         top10 = df_f.dropna(subset=[score_col]).sort_values(score_col, ascending=False).head(10)
@@ -418,40 +463,34 @@ with tabs[4]:
             continue
 
         st.markdown(f"### {role}")
-        for i, (_, row) in enumerate(top10.iterrows(), start=1):
-            # build surname+team image
-            img_url = fotmob_image_url(row["Player"], row["Team"]) or FALLBACK_IMG
+        for idx, (_, row) in enumerate(top10.iterrows(), start=1):
             rating = int(round(row[score_col]))
+            potential = rating
             age = int(row["Age"]) if pd.notna(row["Age"]) else "—"
-            league = row.get("League", "—")
-            pos = row.get("Position", "—")
-            team = row.get("Team", "—")
-            # one tile: image (left) + full content (right)
-            colA, colB, colC = st.columns([1,9,1], vertical_alignment="center")
-            with colA:
-                st.image(img_url, use_container_width=True)
-            with colB:
-                st.markdown(
-                    f"""
-                    <div class="scout-tile">
-                      <div style="flex:1;">
-                        <div class="scout-name">{row['Player']}</div>
-                        <div class="scout-team">{team}</div>
-                        <div class="scout-meta">{league} · {pos} · {age}y</div>
-                        <div style="display:flex;gap:10px;margin-top:10px;">
-                          <div class="badge-num">{rating}</div>
-                          <div class="badge-label">Overall</div>
-                          <div class="badge-num">{rating}</div>
-                          <div class="badge-label">Potential</div>
-                        </div>
-                      </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-            with colC:
-                st.caption(f"#{i}", help="Rank within role (Top 10)")
-            st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)  # small spacer
+            league = row.get("League","—")
+            pos = row.get("Position","—")
+            team = row.get("Team","—")
+            player = row["Player"]
+
+            img = fotmob_headshot_by_surname_and_team(player, team) or FALLBACK_IMG
+
+            card_html = f"""
+            <div class="card">
+              <div class="rank">#{idx}</div>
+              <div class="photo"><img src="{img}" onerror="this.src='{FALLBACK_IMG}'"/></div>
+              <div class="meta">
+                <div class="name">{player}</div>
+                <div class="team">{team}</div>
+                <div class="sub">{league} · {pos} · {age}y</div>
+                <div class="badges">
+                  <div class="badgeNum">{rating}</div><div class="badgeLbl">Overall</div>
+                  <div class="badgeNum">{potential}</div><div class="badgeLbl">Potential</div>
+                </div>
+              </div>
+            </div>
+            """
+            st.markdown(card_html, unsafe_allow_html=True)
         st.divider()
+
 
 
