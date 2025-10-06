@@ -1,55 +1,59 @@
-# app_top20_tiles.py — Top 20 Tiles View (compact + taller, final)
-# Requirements: streamlit, pandas, numpy.
+# app_top20_tiles.py — Top 20 Tiles (final)
+# Requirements: streamlit, pandas, numpy, requests
 
 import os
-import math
 import io
 import re
+import math
+import unicodedata
 from pathlib import Path
 
+import requests
 import streamlit as st
 import pandas as pd
 import numpy as np
 
-st.set_page_config(page_title="Advanced Striker Scouting – Top 20 Tiles", layout="wide")
-st.title("🔎 Advanced Striker Scouting – Top 20 Tiles")
-st.caption("Overall = league-weighted combined-role score. Potential = Overall + age bonus.")
+# ----------------- PAGE -----------------
+st.set_page_config(page_title="Advanced Striker Scouting — Top 20 Tiles", layout="wide")
+st.title("🔎 Advanced Striker Scouting — Top 20 Tiles")
+st.caption("Overall = league-weighted combined-role score. Potential = Overall + age bonus. (Photos resolved via FotMob; fallback image always shown.)")
 
 # ----------------- STYLE -----------------
 st.markdown(
     """
     <style>
-    :root { --bg: #0f1115; --card: #161a22; --muted: #a8b3cf; --soft: #202633; }
-    .block-container { padding-top: 0.8rem; }
-    body { background-color: var(--bg); }
-    .wrap { display:flex; justify-content:center; }
-    .player-card {
+      :root { --bg: #0f1115; --card: #161a22; --muted: #a8b3cf; --soft: #202633; }
+      .block-container { padding-top: 0.8rem; }
+      body { background-color: var(--bg); }
+      .wrap { display:flex; justify-content:center; }
+      .player-card {
         width:min(420px, 96%);
         display:grid;
-        grid-template-columns: 96px 1fr 48px; /* image | content | rank */
+        grid-template-columns: 96px 1fr 48px; /* photo | content | rank */
         gap:12px;
         align-items:center;
         background:var(--card);
         border:1px solid #252b3a;
         border-radius:18px;
         padding:16px;
-    }
-    .avatar {
+      }
+      /* Div-based avatar with multi-background fallback */
+      .avatar {
         width:96px; height:96px; border-radius:12px;
-        object-fit:cover; background:#0b0d12; border:1px solid #2a3145;
-    }
-    .leftcol { display:flex; flex-direction:column; align-items:center; gap:8px; }
-    .name { font-weight:800; font-size:22px; color:#e8ecff; margin-bottom:6px; }
-    .sub { color:#a8b3cf; font-size:15px; }
-    .pill {
-        padding:2px 10px; border-radius:9px; font-weight:800; font-size:18px;
-        color:#0b0d12; display:inline-block; min-width:42px; text-align:center;
-    }
-    .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin:4px 0; }
-    .chip { background:var(--soft); color:#cbd5f5; border:1px solid #2d3550; padding:3px 10px; border-radius:9px; font-size:13px; }
-    .teamline { color:#e6ebff; font-size:15px; font-weight:400; margin-top:2px; }
-    .rank { color:#94a0c6; font-weight:800; font-size:18px; text-align:right; }
-    .divider { height:12px; }
+        background-color:#0b0d12; border:1px solid #2a3145;
+        background-repeat:no-repeat, no-repeat;
+        background-position:center center, center center;
+        background-size:cover, cover;
+      }
+      .leftcol { display:flex; flex-direction:column; align-items:center; gap:8px; }
+      .name { font-weight:800; font-size:22px; color:#e8ecff; margin-bottom:6px; }
+      .sub { color:#a8b3cf; font-size:15px; }
+      .pill { padding:2px 10px; border-radius:9px; font-weight:800; font-size:18px; color:#0b0d12; display:inline-block; min-width:42px; text-align:center; }
+      .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin:4px 0; }
+      .chip { background:var(--soft); color:#cbd5f5; border:1px solid #2d3550; padding:3px 10px; border-radius:9px; font-size:13px; }
+      .teamline { color:#e6ebff; font-size:15px; font-weight:400; margin-top:2px; }
+      .rank { color:#94a0c6; font-weight:800; font-size:18px; text-align:right; }
+      .divider { height:12px; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -110,7 +114,7 @@ ROLES = {
     },
 }
 
-# Combine both roles into ONE metric (overlapping metrics add up)
+# Combine both roles into one weight map (overlaps add)
 COMBINED_METRICS = {}
 for r in ROLES.values():
     for k, w in r['metrics'].items():
@@ -143,9 +147,6 @@ LEAGUE_STRENGTHS = {
 }
 
 REQUIRED_BASE = {"Player","Team","League","Age","Position","Minutes played","Market value","Contract expires","Goals"}
-
-CF_PREFIXES = ('CF',)
-def position_filter(pos): return str(pos).strip().upper().startswith(CF_PREFIXES)
 
 # ----------------- DATA LOADING -----------------
 @st.cache_data(show_spinner=False)
@@ -232,7 +233,6 @@ for c in FEATURES:
     df_f[c] = pd.to_numeric(df_f[c], errors="coerce")
 df_f = df_f.dropna(subset=FEATURES)
 
-# League strength filter
 df_f["League Strength"] = df_f["League"].map(LEAGUE_STRENGTHS).fillna(0.0)
 df_f = df_f[(df_f["League Strength"] >= float(min_strength)) & (df_f["League Strength"] <= float(max_strength))]
 df_f = df_f[(df_f["Market value"] >= min_value) & (df_f["Market value"] <= max_value)]
@@ -265,33 +265,69 @@ def age_bonus(age: float) -> int:
     if a < 16: return 9
     return table.get(a, 0)
 
-# overall = (1-beta) * CombinedScore + beta * league_strength
 df_f["Overall Rating"] = (1 - beta) * df_f["Combined Score"] + beta * (df_f["League Strength"].fillna(50))
 df_f["Potential"] = df_f.apply(lambda r: r["Overall Rating"] + age_bonus(r["Age"]), axis=1)
 
-# Contract year (just year)
 df_f["Contract Year"] = pd.to_datetime(df_f["Contract expires"], errors="coerce").dt.year.fillna(0).astype(int)
 
 # ----------------- Top N -----------------
 ranked = df_f.sort_values("Overall Rating", ascending=False).head(int(top_n)).copy().reset_index(drop=True)
 
-# ----------------- Image helper -----------------
+# ----------------- Image helpers -----------------
 FALLBACK_URL = "https://i.redd.it/43axcjdu59nd1.jpeg"
 
-def guess_fotmob_url(team: str, player: str) -> str:
-    # best-effort slug; FotMob uses numeric IDs but this lets us try something
-    def slug(x): return re.sub(r"[^a-z0-9]+", "-", str(x).lower()).strip("-")
-    surname = str(player).split()[-1]
-    return f"https://images.fotmob.com/image_resources/playerimages/{slug(surname)}-{slug(team)}.png"
+@st.cache_data(show_spinner=False, ttl=60*60*24)
+def fotmob_search(query: str) -> dict | None:
+    """Call FotMob's public search API. Returns JSON or None."""
+    try:
+        r = requests.get("https://www.fotmob.com/api/search", params={"q": query}, timeout=6)
+        if r.ok:
+            return r.json()
+    except Exception:
+        return None
+    return None
 
-# SoFIFA-style rating colors (red→orange→yellow→light green→dark green→deeper)
+def _norm(s: str) -> str:
+    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
+    return s.lower().strip()
+
+def resolve_fotmob_id(player_name: str, team_name: str | None = None) -> str | None:
+    if not player_name:
+        return None
+    data = fotmob_search(player_name)
+    if not data or "players" not in data:
+        return None
+
+    pn = _norm(player_name.replace(".", ""))  # 'H. Wright' -> 'h wright'
+    tn = _norm(team_name) if team_name else None
+
+    best, best_score = None, -1
+    for p in data.get("players", []):
+        name = _norm(p.get("name", ""))
+        team = _norm(p.get("teamName", ""))
+        pid  = p.get("id")
+        score = 0
+        if pn in name or name in pn: score += 2
+        if pn.split()[-1] in name:  score += 1  # surname match
+        if tn and tn in team:       score += 2
+        if score > best_score:
+            best_score, best = score, pid
+    return str(best) if best is not None else None
+
+def fotmob_player_image_url(player_name: str, team_name: str | None = None) -> str | None:
+    pid = resolve_fotmob_id(player_name, team_name)
+    if not pid:
+        return None
+    return f"https://images.fotmob.com/image_resources/playerimages/{pid}.png"
+
+# SoFIFA-style colors
 PALETTE = [
     (0,   (208,  2, 27)),   # red
     (50,  (245,166, 35)),   # orange
     (65,  (248,231, 28)),   # yellow
     (75,  (126,211, 33)),   # light green
     (85,  (65, 117,  5)),   # dark green
-    (100, (40,  90,  4)),   # deeper green for 100
+    (100, (40,  90,  4)),   # deeper green
 ]
 def _lerp(a, b, t): return tuple(int(round(a[i] + (b[i]-a[i]) * t)) for i in range(3))
 def rating_color(v: float) -> str:
@@ -300,30 +336,23 @@ def rating_color(v: float) -> str:
         x0, c0 = PALETTE[i]; x1, c1 = PALETTE[i+1]
         if v <= x1:
             t = 0 if x1 == x0 else (v - x0) / (x1 - x0)
-            r,g,b = _lerp(c0, c1, t)
-            return f"rgb({r},{g},{b})"
-    r,g,b = PALETTE[-1][1]
-    return f"rgb({r},{g},{b})"
+            r,g,b = _lerp(c0, c1, t); return f"rgb({r},{g},{b})"
+    r,g,b = PALETTE[-1][1]; return f"rgb({r},{g},{b})"
 
 # ----------------- RENDER -----------------
 for idx, row in ranked.iterrows():
     rank = idx + 1
     player = str(row.get("Player", ""))
-    surname = player.split()[-1] if player else ""
     team = str(row.get("Team", ""))
     pos = str(row.get("Position", ""))
     age = int(row.get("Age", 0)) if not pd.isna(row.get("Age", np.nan)) else 0
-    overall = float(row["Overall Rating"]) if not pd.isna(row["Overall Rating"]) else 0
-    potential = float(row["Potential"]) if not pd.isna(row["Potential"]) else overall
+    overall_i = int(round(float(row["Overall Rating"])))
+    potential_i = int(round(float(row["Potential"])))
     contract_year = int(row.get("Contract Year", 0))
 
-    overall_i = int(round(overall))
-    potential_i = int(round(potential))
-
-    # Try FotMob; if empty, pre-fallback; onerror still handles 404/network
-    img_url_try = guess_fotmob_url(team, surname)
-    if not img_url_try or img_url_try.strip() == "":
-        img_url_try = FALLBACK_URL
+    # Try FotMob (ID-based); otherwise fallback
+    primary = fotmob_player_image_url(player_name=player, team_name=team) or FALLBACK_URL
+    avatar_style = f"background-image: url('{primary}'), url('{FALLBACK_URL}');"
 
     ov_style = f"background:{rating_color(overall_i)};"
     po_style = f"background:{rating_color(potential_i)};"
@@ -332,7 +361,7 @@ for idx, row in ranked.iterrows():
     <div class='wrap'>
       <div class='player-card'>
         <div class='leftcol'>
-          <img class='avatar' src='{img_url_try}' onerror="this.onerror=null;this.src='{FALLBACK_URL}';" />
+          <div class='avatar' style="{avatar_style}"></div>
           <div class='row'>
             <span class='chip'>{age} y.o.</span>
             <span class='chip'>{contract_year if contract_year>0 else '—'}</span>
@@ -358,6 +387,7 @@ for idx, row in ranked.iterrows():
     </div>
     <div class='divider'></div>
     """, unsafe_allow_html=True)
+
 
 
 
