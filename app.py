@@ -270,18 +270,33 @@ def guess_fotmob_url(team: str, player: str) -> str:
     parts = [slug(surname), slug(team)]
     return f"https://images.fotmob.com/image_resources/playerimages/{'-'.join(parts)}.png"
 
-# rating color: 0→red, 50→green, 100→gold
+# SoFIFA-style rating colors (red→orange→yellow→light green→dark green)
+# We interpolate across 5 anchors at score 0, 50, 65, 75, 85, 100
+PALETTE = [
+    (0,   (208,  2, 27)),   # deep red
+    (50,  (245,166, 35)),   # orange
+    (65,  (248,231, 28)),   # yellow
+    (75,  (126,211, 33)),   # light green
+    (85,  (65, 117,  5)),   # dark green
+    (100, (40,  90,  4)),   # deeper green for 100
+]
+
+def _lerp(a, b, t):
+    return tuple(int(round(a[i] + (b[i]-a[i]) * t)) for i in range(3))
 
 def rating_color(v: float) -> str:
+    # clamp for color only
     v = max(0.0, min(100.0, float(v)))
-    if v <= 50:
-        t = v / 50.0  # 0..1 from red→green
-        # interpolate hue 0 (red) → 120 (green)
-        hue = 0 + 120 * t
-    else:
-        t = (v - 50.0) / 50.0  # 0..1 from green→gold (~55deg)
-        hue = 120 - (120 - 55) * t
-    return f"hsl({hue:.0f}, 80%, 55%)"
+    # find segment
+    for i in range(len(PALETTE)-1):
+        x0, c0 = PALETTE[i]
+        x1, c1 = PALETTE[i+1]
+        if v <= x1:
+            t = 0 if x1 == x0 else (v - x0) / (x1 - x0)
+            r,g,b = _lerp(c0, c1, t)
+            return f"rgb({r},{g},{b})"
+    r,g,b = PALETTE[-1][1]
+    return f"rgb({r},{g},{b})"
 
 # ----------------- RENDER -----------------
 for idx, row in ranked.iterrows():
