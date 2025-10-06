@@ -319,63 +319,30 @@ def filtered_view(df_in: pd.DataFrame, *, age_max=None, contract_year=None, valu
     if value_max is not None: t = t[t["Market value"] <= value_max]
     return t
 
-# ----------------- FOTMOB LOOKUP (name + team) -----------------
-def _strip_accents(s: str) -> str:
-    return "".join(c for c in unicodedata.normalize("NFKD", str(s)) if not unicodedata.combining(c))
-def _canon(s: str) -> str:
-    s = _strip_accents(s).lower()
-    return re.sub(r"[^a-z0-9]+", " ", str(s)).strip()
-def _similar(a: str, b: str) -> float:
-    ta, tb = set(_canon(a).split()), set(_canon(b).split())
-    if not ta or not tb: return 0.0
-    return len(ta & tb) / len(ta | tb)
+    with tabs[4]:
+        st.subheader(f"{role} — Top 10 (tiles)")
+        top10 = top_table(df_f, role, 10).reset_index()
+        # top_table returns columns: index (rank), Player, Team, League, Position, Age, Contract expires, League Strength, {role} Score
+        score_col = f"{role} Score"
 
-TEAM_ALIASES = {
-    "man utd":"manchester united",
-    "psg":"paris saint germain",
-    "inter":"internazionale",
-    # extend if your dataset team labels differ from FotMob
-}
+        for _, row in top10.iterrows():
+            cols = st.columns([1, 6, 1])  # image, text, rank
+            with cols[0]:
+                img = fotmob_image_url(row["Player"], row["Team"]) or FALLBACK_IMG
+                st.image(img, use_container_width=True)
+            with cols[1]:
+                st.markdown(f"**{row['Player']}**")
+                st.caption(f"{row['Team']}")
+                st.caption(f"{row['League']} · {row['Position']} · {int(row['Age'])}y")
+                c1, c2 = st.columns([1,1])
+                with c1:
+                    st.metric("Overall", int(row[score_col]))
+                with c2:
+                    st.metric("Potential", int(row[score_col]))  # same as score for now
+            with cols[2]:
+                st.caption(f"#{int(row['index'])}")
+            st.divider()
 
-@st.cache_data(show_spinner=False, ttl=60*60*24)
-def fotmob_image_url(player_name: str, team_name: str | None = None) -> str | None:
-    try:
-        q = requests.utils.quote(str(player_name))
-        r = requests.get(f"https://www.fotmob.com/api/search?q={q}", timeout=6)
-        if r.status_code != 200:
-            return None
-        js = r.json()
-        cand = js.get("players") or []
-        if not cand:
-            return None
-
-        team_target = _canon(TEAM_ALIASES.get(_canon(team_name or ""), team_name or ""))
-
-        pick = None
-        if team_target:
-            exact = [c for c in cand if _canon(c.get("team",{}).get("name","")) == team_target]
-            if exact:
-                pick = exact[0]
-            else:
-                scored = sorted(
-                    (( _similar(c.get("team",{}).get("name",""), team_target), c) for c in cand),
-                    key=lambda x: x[0], reverse=True
-                )
-                if scored and scored[0][0] >= 0.6:
-                    pick = scored[0][1]
-        if pick is None:
-            pick = cand[0]
-
-        pid = pick.get("id")
-        if not pid:
-            return None
-        url = f"https://images.fotmob.com/image_resources/playerimages/{pid}.png"
-        hr = requests.head(url, timeout=6)
-        return url if hr.status_code == 200 else None
-    except Exception:
-        return None
-
-FALLBACK_IMG = "https://static.fotmob.com/players/_fallback.png"
 
 # ----------------- TABS (tables) -----------------
 tabs = st.tabs(["Overall Top N", "U23 Top N", "Expiring Contracts", "Value Band (≤ max €)", "Tiles (Top 10 per role)"])
