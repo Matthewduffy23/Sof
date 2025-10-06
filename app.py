@@ -1,8 +1,5 @@
-# app_top20_tiles.py — Top 20 Tiles with multi-source headshots (Sofifa → FIFACM → FotMob → fallback)
-st.caption(
-    "Overall = league-weighted combined-role score. Potential = Overall + age bonus. "
-    "Headshots resolved in order: Sofifa → FIFACM → FotMob → fallback."
-)
+# app_top20_tiles.py — Top 20 Tiles with multi-source headshots (Wiki → Sofifa → FIFACM → FotMob → fallback)
+# Requirements: streamlit, pandas, numpy, requests, beautifulsoup4
 
 
 import os
