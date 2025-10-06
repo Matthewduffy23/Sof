@@ -1,38 +1,16 @@
-# app.py — Advanced Striker Scouting + Tiles (FotMob headshots)
-# Requires: streamlit, pandas, numpy, matplotlib, requests
-# (scikit-learn optional; a tiny StandardScaler fallback is included)
+# app.py — Advanced Striker Scouting + Dark Tiles + FotMob headshots (surname+team)
+# Requirements: streamlit, pandas, numpy, matplotlib, requests
 
-import os
 import io
 import math
 import re
 import unicodedata
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
 import requests
 import streamlit as st
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-
-# ---- Optional sklearn (fallback provided) ----
-try:
-    from sklearn.preprocessing import StandardScaler
-except Exception:
-    class StandardScaler:  # minimal drop-in
-        def __init__(self): self.mean_ = None; self.scale_ = None
-        def fit(self, X):
-            X = np.asarray(X, dtype=float)
-            self.mean_ = X.mean(axis=0)
-            std = X.std(axis=0, ddof=0)
-            std[std == 0] = 1.0
-            self.scale_ = std
-            return self
-        def transform(self, X):
-            X = np.asarray(X, dtype=float)
-            return (X - self.mean_) / self.scale_
-        def fit_transform(self, X):
-            self.fit(X); return self.transform(X)
 
 # ----------------- PAGE -----------------
 st.set_page_config(page_title="Advanced Striker Scouting System", layout="wide")
@@ -41,30 +19,30 @@ st.caption("Use the sidebar to shape your pool. Tables + Tiles with FotMob heads
 
 # ----------------- CONFIG -----------------
 INCLUDED_LEAGUES = [
-    'England 1.', 'England 2.', 'England 3.', 'England 4.', 'England 5.',
-    'England 6.', 'England 7.', 'England 8.', 'England 9.', 'England 10.',
-    'Albania 1.', 'Algeria 1.', 'Andorra 1.', 'Argentina 1.', 'Armenia 1.',
-    'Australia 1.', 'Austria 1.', 'Austria 2.', 'Azerbaijan 1.', 'Belgium 1.',
-    'Belgium 2.', 'Bolivia 1.', 'Bosnia 1.', 'Brazil 1.', 'Brazil 2.', 'Brazil 3.',
-    'Bulgaria 1.', 'Canada 1.', 'Chile 1.', 'Colombia 1.', 'Costa Rica 1.',
-    'Croatia 1.', 'Cyprus 1.', 'Czech 1.', 'Czech 2.', 'Denmark 1.', 'Denmark 2.',
-    'Ecuador 1.', 'Egypt 1.', 'Estonia 1.', 'Finland 1.', 'France 1.', 'France 2.',
-    'France 3.', 'Georgia 1.', 'Germany 1.', 'Germany 2.', 'Germany 3.', 'Germany 4.',
-    'Greece 1.', 'Hungary 1.', 'Iceland 1.', 'Israel 1.', 'Israel 2.', 'Italy 1.',
-    'Italy 2.', 'Italy 3.', 'Japan 1.', 'Japan 2.', 'Kazakhstan 1.', 'Korea 1.',
-    'Latvia 1.', 'Lithuania 1.', 'Malta 1.', 'Mexico 1.', 'Moldova 1.', 'Morocco 1.',
-    'Netherlands 1.', 'Netherlands 2.', 'North Macedonia 1.', 'Northern Ireland 1.',
-    'Norway 1.', 'Norway 2.', 'Paraguay 1.', 'Peru 1.', 'Poland 1.', 'Poland 2.',
-    'Portugal 1.', 'Portugal 2.', 'Portugal 3.', 'Qatar 1.', 'Ireland 1.', 'Romania 1.',
-    'Russia 1.', 'Saudi 1.', 'Scotland 1.', 'Scotland 2.', 'Scotland 3.', 'Serbia 1.',
-    'Serbia 2.', 'Slovakia 1.', 'Slovakia 2.', 'Slovenia 1.', 'Slovenia 2.', 'South Africa 1.',
-    'Spain 1.', 'Spain 2.', 'Spain 3.', 'Sweden 1.', 'Sweden 2.', 'Switzerland 1.',
-    'Switzerland 2.', 'Tunisia 1.', 'Turkey 1.', 'Turkey 2.', 'Ukraine 1.', 'UAE 1.',
-    'USA 1.', 'USA 2.', 'Uruguay 1.', 'Uzbekistan 1.', 'Venezuela 1.', 'Wales 1.'
+    'England 1.','England 2.','England 3.','England 4.','England 5.',
+    'England 6.','England 7.','England 8.','England 9.','England 10.',
+    'Albania 1.','Algeria 1.','Andorra 1.','Argentina 1.','Armenia 1.',
+    'Australia 1.','Austria 1.','Austria 2.','Azerbaijan 1.','Belgium 1.',
+    'Belgium 2.','Bolivia 1.','Bosnia 1.','Brazil 1.','Brazil 2.','Brazil 3.',
+    'Bulgaria 1.','Canada 1.','Chile 1.','Colombia 1.','Costa Rica 1.',
+    'Croatia 1.','Cyprus 1.','Czech 1.','Czech 2.','Denmark 1.','Denmark 2.',
+    'Ecuador 1.','Egypt 1.','Estonia 1.','Finland 1.','France 1.','France 2.',
+    'France 3.','Georgia 1.','Germany 1.','Germany 2.','Germany 3.','Germany 4.',
+    'Greece 1.','Hungary 1.','Iceland 1.','Israel 1.','Israel 2.','Italy 1.',
+    'Italy 2.','Italy 3.','Japan 1.','Japan 2.','Kazakhstan 1.','Korea 1.',
+    'Latvia 1.','Lithuania 1.','Malta 1.','Mexico 1.','Moldova 1.','Morocco 1.',
+    'Netherlands 1.','Netherlands 2.','North Macedonia 1.','Northern Ireland 1.',
+    'Norway 1.','Norway 2.','Paraguay 1.','Peru 1.','Poland 1.','Poland 2.',
+    'Portugal 1.','Portugal 2.','Portugal 3.','Qatar 1.','Ireland 1.','Romania 1.',
+    'Russia 1.','Saudi 1.','Scotland 1.','Scotland 2.','Scotland 3.','Serbia 1.',
+    'Serbia 2.','Slovakia 1.','Slovakia 2.','Slovenia 1.','Slovenia 2.','South Africa 1.',
+    'Spain 1.','Spain 2.','Spain 3.','Sweden 1.','Sweden 2.','Switzerland 1.',
+    'Switzerland 2.','Tunisia 1.','Turkey 1.','Turkey 2.','Ukraine 1.','UAE 1.',
+    'USA 1.','USA 2.','Uruguay 1.','Uzbekistan 1.','Venezuela 1.','Wales 1.'
 ]
 
 PRESET_LEAGUES = {
-    "Top 5 Europe": {'England 1.', 'France 1.', 'Germany 1.', 'Italy 1.', 'Spain 1.'},
+    "Top 5 Europe": {'England 1.','France 1.','Germany 1.','Italy 1.','Spain 1.'},
     "Top 20 Europe": {
         'England 1.','Italy 1.','Spain 1.','Germany 1.','France 1.',
         'England 2.','Portugal 1.','Belgium 1.','Turkey 1.','Germany 2.','Spain 2.','France 2.',
@@ -74,38 +52,32 @@ PRESET_LEAGUES = {
 }
 
 FEATURES = [
-    'Defensive duels per 90', 'Defensive duels won, %',
-    'Aerial duels per 90', 'Aerial duels won, %',
-    'PAdj Interceptions', 'Non-penalty goals per 90', 'xG per 90',
-    'Shots per 90', 'Shots on target, %', 'Goal conversion, %',
-    'Crosses per 90', 'Accurate crosses, %', 'Dribbles per 90',
-    'Successful dribbles, %', 'Head goals per 90', 'Key passes per 90',
-    'Touches in box per 90', 'Progressive runs per 90', 'Accelerations per 90',
-    'Passes per 90', 'Accurate passes, %', 'xA per 90',
-    'Passes to penalty area per 90', 'Accurate passes to penalty area, %',
-    'Deep completions per 90', 'Smart passes per 90',
+    'Defensive duels per 90','Defensive duels won, %',
+    'Aerial duels per 90','Aerial duels won, %',
+    'PAdj Interceptions','Non-penalty goals per 90','xG per 90',
+    'Shots per 90','Shots on target, %','Goal conversion, %',
+    'Crosses per 90','Accurate crosses, %','Dribbles per 90',
+    'Successful dribbles, %','Head goals per 90','Key passes per 90',
+    'Touches in box per 90','Progressive runs per 90','Accelerations per 90',
+    'Passes per 90','Accurate passes, %','xA per 90',
+    'Passes to penalty area per 90','Accurate passes to penalty area, %',
+    'Deep completions per 90','Smart passes per 90',
 ]
 
 ROLES = {
-    'Target Man CF': {
-        'desc': "Aerial outlet, duel dominance, occupy CBs, threaten crosses & second balls.",
-        'metrics': {'Aerial duels per 90': 3, 'Aerial duels won, %': 4}
-    },
-    'Goal Threat CF': {
-        'desc': "High shot & xG volume, box presence, consistent SoT and finishing.",
-        'metrics': {'Non-penalty goals per 90': 3,'Shots per 90': 1.5,'xG per 90': 3,
-                    'Touches in box per 90': 1,'Shots on target, %': 0.5}
-    },
-    'Link-Up CF': {
-        'desc': "Combine & create; link play; progress & deliver to the penalty area.",
-        'metrics': {'Passes per 90': 2,'Passes to penalty area per 90': 1.5,'Deep completions per 90': 1,
-                    'Smart passes per 90': 1.5,'Accurate passes, %': 1.5,'Key passes per 90': 1,
-                    'Dribbles per 90': 2,'Successful dribbles, %': 1,'Progressive runs per 90': 2,'xA per 90': 3}
-    },
-    'All in': {
-        'desc': "Blend of creation + scoring; balanced all-round attacking profile.",
-        'metrics': {'xA per 90': 2,'Dribbles per 90': 2,'xG per 90': 3,'Non-penalty goals per 90': 3}
-    }
+    'Target Man CF': {'desc': "Aerial outlet, duel dominance, occupy CBs, threaten crosses & second balls.",
+                      'metrics': {'Aerial duels per 90': 3, 'Aerial duels won, %': 4}},
+    'Goal Threat CF': {'desc': "High shot & xG volume, box presence, consistent SoT and finishing.",
+                       'metrics': {'Non-penalty goals per 90': 3, 'Shots per 90': 1.5, 'xG per 90': 3,
+                                   'Touches in box per 90': 1, 'Shots on target, %': 0.5}},
+    'Link-Up CF': {'desc': "Combine & create; link play; progress & deliver to the penalty area.",
+                   'metrics': {'Passes per 90': 2,'Passes to penalty area per 90': 1.5,
+                               'Deep completions per 90': 1,'Smart passes per 90': 1.5,
+                               'Accurate passes, %': 1.5,'Key passes per 90': 1,
+                               'Dribbles per 90': 2,'Successful dribbles, %': 1,
+                               'Progressive runs per 90': 2,'xA per 90': 3}},
+    'All in': {'desc': "Blend of creation + scoring; balanced all-round attacking profile.",
+               'metrics': {'xA per 90': 2,'Dribbles per 90': 2,'xG per 90': 3,'Non-penalty goals per 90': 3}}
 }
 
 LEAGUE_STRENGTHS = {
@@ -134,9 +106,7 @@ LEAGUE_STRENGTHS = {
     'Northern Ireland 1.':11.43,'England 10.':10.00,'Scotland 3.':10.00,'England 6.':10.00
 }
 
-REQUIRED_BASE = {
-    "Player","Team","League","Age","Position","Minutes played","Market value","Contract expires","Goals"
-}
+REQUIRED_BASE = {"Player","Team","League","Age","Position","Minutes played","Market value","Contract expires","Goals"}
 
 # ----------------- DATA LOADER -----------------
 @st.cache_data(show_spinner=False)
@@ -164,96 +134,6 @@ def load_df(csv_name: str = "WORLDJUNE25.csv") -> pd.DataFrame:
     return _read_csv_from_bytes(up.getvalue())
 
 df = load_df()
-
-# ----------------- FOTMOB LOOKUP (surname + team only) -----------------
-import unicodedata, re, requests
-from urllib.parse import quote
-
-FALLBACK_IMG = "https://i.redd.it/43axcjdu59nd1.jpeg"  # your fallback
-
-def _strip_accents(s: str) -> str:
-    return "".join(c for c in unicodedata.normalize("NFKD", str(s)) if not unicodedata.combining(c))
-
-def _canon(s: str) -> str:
-    s = _strip_accents(str(s)).lower()
-    return re.sub(r"[^a-z0-9]+", " ", s).strip()
-
-def _surname(name: str) -> str:
-    parts = [p for p in _canon(name).split() if p]
-    return parts[-1] if parts else ""
-
-def _clean_team(team: str | None) -> str:
-    if not team: return ""
-    t = _canon(team)
-    # trim common suffixes/variants
-    t = re.sub(r"\b(fc|cf|u21|u23|b|ii|reserves)\b", " ", t)
-    return re.sub(r"\s+", " ", t).strip()
-
-TEAM_ALIASES = {
-    "man utd": "manchester united",
-    "psg": "paris saint germain",
-    "inter": "internazionale",
-    "sheff wed": "sheffield wednesday",
-    "luton": "luton town",
-}
-
-def _similar(a: str, b: str) -> float:
-    ta, tb = set(_canon(a).split()), set(_canon(b).split())
-    if not ta or not tb: return 0.0
-    return len(ta & tb) / len(ta | tb)
-
-UA = {"User-Agent": "Mozilla/5.0 (compatible; scouting-app/1.0)"}
-
-@st.cache_data(show_spinner=False, ttl=60*60*24)
-def fotmob_image_url(player_name: str, team_name: str | None = None) -> str | None:
-    """
-    Search FotMob using ONLY 'surname team' and return a headshot URL.
-    Falls back to FALLBACK_IMG if not found or blocked.
-    """
-    try:
-        surname = _surname(player_name)
-        if not surname:
-            return FALLBACK_IMG
-
-        team_clean = _clean_team(TEAM_ALIASES.get(_canon(team_name or ""), team_name or ""))
-
-        query = f"{surname} {team_clean}".strip()
-        r = requests.get(f"https://www.fotmob.com/api/search?q={quote(query)}",
-                         timeout=6, headers=UA)
-        if r.status_code != 200:
-            return FALLBACK_IMG
-
-        players = r.json().get("players") or []
-        if not players:
-            return FALLBACK_IMG
-
-        # pick best by team similarity (surname already in query)
-        best = None
-        best_score = -1.0
-        for c in players:
-            tm = c.get("team", {}).get("name", "")
-            sc = _similar(tm, team_clean)
-            if sc > best_score:
-                best, best_score = c, sc
-
-        if not best: 
-            return FALLBACK_IMG
-
-        pid = best.get("id")
-        if not pid:
-            return FALLBACK_IMG
-
-        url = f"https://images.fotmob.com/image_resources/playerimages/{pid}.png"
-        # verify the image loads; if not, use fallback
-        test = requests.get(url, timeout=6, headers=UA)
-        if test.status_code == 200 and test.content and len(test.content) > 256:
-            return url
-        return FALLBACK_IMG
-
-    except Exception:
-        return FALLBACK_IMG
-
-
 
 # ----------------- SIDEBAR FILTERS -----------------
 with st.sidebar:
@@ -317,13 +197,6 @@ with st.sidebar:
 
     top_n = st.number_input("Top N per table", 5, 200, 50, 5)
     round_to = st.selectbox("Round output percentiles to", [0, 1], index=0)
-
-    st.subheader("Tile fallback image")
-    upl = st.file_uploader("Optional: upload a fallback image (PNG/JPG)", type=["png","jpg","jpeg"])
-    if upl is not None:
-        FALLBACK_IMG_BYTES = upl.getvalue()
-    else:
-        FALLBACK_IMG_BYTES = None
 
 # ----------------- VALIDATION -----------------
 missing = [c for c in REQUIRED_BASE if c not in df.columns]
@@ -395,7 +268,7 @@ if enable_min_perf and sel_metrics:
         st.warning("No players meet the minimum performance thresholds. Loosen thresholds.")
         st.stop()
 
-# ----------------- HELPERS -----------------
+# ----------------- TABLE HELPERS -----------------
 def fmt_cols(df_in: pd.DataFrame, score_col: str) -> pd.DataFrame:
     out = df_in.copy()
     out[score_col] = out[score_col].round(round_to).astype(int if round_to == 0 else float)
@@ -416,30 +289,103 @@ def filtered_view(df_in: pd.DataFrame, *, age_max=None, contract_year=None, valu
     if value_max is not None: t = t[t["Market value"] <= value_max]
     return t
 
-# ----------------- TABS (tables + tiles) -----------------
-tabs = st.tabs(["Overall Top N", "U23 Top N", "Expiring Contracts", "Value Band (≤ max €)", "Tiles (Top 10 per role)"])
+# ----------------- FOTMOB LOOKUP (surname + team) -----------------
+def _strip_accents(s: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFKD", str(s)) if not unicodedata.combining(c))
 
+def _canon(s: str) -> str:
+    s = _strip_accents(s).lower()
+    return re.sub(r"[^a-z0-9]+", " ", s).strip()
+
+def _surname(full_name: str) -> str:
+    # Handles "C. Morris", "Carlton Morris", "B. Osayi-Samuel" -> "morris", "morris", "osayi samuel"
+    s = _strip_accents(full_name).strip()
+    parts = re.split(r"\s+", s.replace("·", " ").replace(",", " "))
+    # drop first token if it's an initial like "C." or "C"
+    if parts and re.fullmatch(r"[A-Za-z]\.?", parts[0]):
+        parts = parts[1:]
+    if not parts:
+        return _canon(full_name)
+    # surname = everything after first token (to keep double-barrel)
+    if len(parts) >= 2:
+        surname = " ".join(parts[1:])
+    else:
+        surname = parts[0]
+    return _canon(surname)
+
+TEAM_ALIASES = {
+    "man utd": "manchester united",
+    "psg": "paris saint germain",
+    "inter": "internazionale",
+    "sheff wed": "sheffield wednesday",
+    "sheff utd": "sheffield united",
+    # add as needed
+}
+
+FALLBACK_IMG = "https://i.redd.it/43axcjdu59nd1.jpeg"
+
+HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; ScoutApp/1.0)"}
+
+@st.cache_data(show_spinner=False, ttl=60*60)
+def fotmob_image_url(player_name: str, team_name: str | None = None) -> str | None:
+    try:
+        sname = _surname(player_name)
+        if not sname:
+            return None
+        team_norm = _canon(TEAM_ALIASES.get(_canon(team_name or ""), team_name or ""))
+        q = requests.utils.quote(f"{sname} {team_norm}".strip())
+        r = requests.get(f"https://www.fotmob.com/api/search?q={q}", headers=HEADERS, timeout=6)
+        if r.status_code != 200:
+            return None
+        js = r.json()
+        players = js.get("players") or []
+        if not players:
+            return None
+
+        # Score candidates by (surname match + team overlap)
+        def score(c):
+            cname = _canon(c.get("name", ""))
+            cteam = _canon(c.get("team", {}).get("name", ""))
+            surname_match = 1.0 if sname in cname or cname.endswith(sname) else 0.0
+            team_overlap = 0.0
+            if team_norm:
+                ta, tb = set(team_norm.split()), set(cteam.split())
+                if ta and tb:
+                    team_overlap = len(ta & tb) / len(ta | tb)
+            return surname_match * 0.7 + team_overlap * 0.3
+
+        best = max(players, key=score)
+        if score(best) < 0.3:  # weak match
+            return None
+        pid = best.get("id")
+        if not pid:
+            return None
+        url = f"https://images.fotmob.com/image_resources/playerimages/{pid}.png"
+        hr = requests.head(url, headers=HEADERS, timeout=6)
+        return url if hr.status_code == 200 else None
+    except Exception:
+        return None
+
+# ----------------- TABS -----------------
+tabs = st.tabs(["Overall Top N", "U23 Top N", "Expiring Contracts", "Value Band (≤ max €)", "Tiles (Top 10 per role)"])
 for role, role_def in ROLES.items():
     with tabs[0]:
         st.subheader(f"{role} — Overall Top {int(top_n)}")
         st.caption(role_def.get("desc", ""))
         st.dataframe(top_table(df_f, role, int(top_n)), use_container_width=True)
         st.divider()
-
     with tabs[1]:
         u23_cutoff = st.number_input(f"{role} — U23 cutoff", min_value=16, max_value=30, value=23, step=1, key=f"u23_{role}")
         st.subheader(f"{role} — U{u23_cutoff} Top {int(top_n)}")
         st.caption(role_def.get("desc", ""))
         st.dataframe(top_table(filtered_view(df_f, age_max=u23_cutoff), role, int(top_n)), use_container_width=True)
         st.divider()
-
     with tabs[2]:
         exp_year = st.number_input(f"{role} — Expiring by year", min_value=2024, max_value=2030, value=cutoff_year, step=1, key=f"exp_{role}")
         st.subheader(f"{role} — Contracts expiring ≤ {exp_year}")
         st.caption(role_def.get("desc", ""))
         st.dataframe(top_table(filtered_view(df_f, contract_year=exp_year), role, int(top_n)), use_container_width=True)
         st.divider()
-
     with tabs[3]:
         v_max = st.number_input(f"{role} — Max value (€)", min_value=0, value=value_band_max, step=100_000, key=f"val_{role}")
         st.subheader(f"{role} — Value band ≤ €{v_max:,.0f}")
@@ -447,27 +393,24 @@ for role, role_def in ROLES.items():
         st.dataframe(top_table(filtered_view(df_f, value_max=v_max), role, int(top_n)), use_container_width=True)
         st.divider()
 
+# ----------------- DARK TILE CSS -----------------
+tile_css = """
+<style>
+.scout-tile{background:#191c22;border-radius:18px;padding:16px 18px;display:flex;gap:16px;align-items:center;box-shadow:0 2px 10px rgba(0,0,0,.25)}
+.scout-rank{color:#9ba3af;font-size:.9rem}
+.scout-name{font-weight:700;font-size:1.05rem;color:#eef2f7;margin-bottom:4px}
+.scout-team{font-weight:600;color:#cdd3dd}
+.scout-meta{color:#98a1ae;font-size:.9rem}
+.badge-num{background:#1f6e3a;color:#fff;padding:6px 8px;border-radius:8px;font-weight:800;min-width:34px;text-align:center}
+.badge-label{background:#3b4151;color:#fff;padding:6px 8px;border-radius:8px}
+</style>
+"""
+st.markdown(tile_css, unsafe_allow_html=True)
+
 # ----------------- TILES VIEW -----------------
 with tabs[4]:
     st.subheader("Player Tiles — Top 10 per role")
-    st.caption("Headshots via FotMob by name + team. Potential = Role Score.")
-
-    # CSS for dark grey tiles
-    st.markdown("""
-    <style>
-      .tile {
-        background:#1E1F25; border-radius:14px; padding:14px; margin:10px 0;
-        box-shadow: 0 0 0 1px rgba(255,255,255,0.05) inset;
-      }
-      .badge {
-        display:inline-block; padding:6px 10px; border-radius:10px; margin-right:8px; font-weight:700;
-      }
-      .badge-green { background:#1f6e3a; color:#fff; }
-      .badge-dark  { background:#3b4151; color:#fff; font-weight:600; }
-      .minor { color:#9aa0aa; }
-    </style>
-    """, unsafe_allow_html=True)
-
+    st.caption("Headshots via FotMob by surname + team. Potential = Role Score.")
     for role, role_def in ROLES.items():
         score_col = f"{role} Score"
         top10 = df_f.dropna(subset=[score_col]).sort_values(score_col, ascending=False).head(10)
@@ -476,49 +419,39 @@ with tabs[4]:
 
         st.markdown(f"### {role}")
         for i, (_, row) in enumerate(top10.iterrows(), start=1):
-            c_img, c_txt, c_rank = st.columns([1, 6, 1], gap="medium")
-
-            # Resolve image (uploaded fallback > default fallback)
-            with c_img:
-                url = fotmob_image_url(row["Player"], row["Team"])
-                if url:
-                    st.image(url, use_container_width=True)
-                else:
-                    if FALLBACK_IMG_BYTES is not None:
-                        st.image(FALLBACK_IMG_BYTES, use_container_width=True)
-                    else:
-                        st.image(DEFAULT_FALLBACK_IMG, use_container_width=True)
-
-            with c_txt:
-                rating = int(round(row[score_col]))
-                potential = rating
-                age = int(row["Age"]) if pd.notna(row["Age"]) else "—"
-                league = row.get("League", "—")
-                pos = row.get("Position", "—")
-                team = row.get("Team", "—")
-
+            # build surname+team image
+            img_url = fotmob_image_url(row["Player"], row["Team"]) or FALLBACK_IMG
+            rating = int(round(row[score_col]))
+            age = int(row["Age"]) if pd.notna(row["Age"]) else "—"
+            league = row.get("League", "—")
+            pos = row.get("Position", "—")
+            team = row.get("Team", "—")
+            # one tile: image (left) + full content (right)
+            colA, colB, colC = st.columns([1,9,1], vertical_alignment="center")
+            with colA:
+                st.image(img_url, use_container_width=True)
+            with colB:
                 st.markdown(
                     f"""
-                    <div class="tile">
-                      <div style="display:flex;justify-content:space-between;align-items:center;">
-                        <div style="font-weight:700;font-size:1.05rem;color:#fff;">{row['Player']}</div>
-                        <div class="minor">#{i}</div>
-                      </div>
-                      <div style="margin-top:2px;color:#fff;"><b>{team}</b></div>
-                      <div class="minor" style="margin-top:2px;">{league} · {pos} · {age}y</div>
-                      <div style="display:flex;gap:10px;margin-top:8px;align-items:center;">
-                        <span class="badge badge-green">{rating}</span>
-                        <span class="badge badge-dark">Overall</span>
-                        <span class="badge badge-green">{potential}</span>
-                        <span class="badge badge-dark">Potential</span>
+                    <div class="scout-tile">
+                      <div style="flex:1;">
+                        <div class="scout-name">{row['Player']}</div>
+                        <div class="scout-team">{team}</div>
+                        <div class="scout-meta">{league} · {pos} · {age}y</div>
+                        <div style="display:flex;gap:10px;margin-top:10px;">
+                          <div class="badge-num">{rating}</div>
+                          <div class="badge-label">Overall</div>
+                          <div class="badge-num">{rating}</div>
+                          <div class="badge-label">Potential</div>
+                        </div>
                       </div>
                     </div>
                     """,
                     unsafe_allow_html=True,
                 )
-
-            with c_rank:
-                st.caption(f"#{i}")
-
+            with colC:
+                st.caption(f"#{i}", help="Rank within role (Top 10)")
+            st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)  # small spacer
         st.divider()
+
 
