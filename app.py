@@ -1,12 +1,8 @@
-# app_top20_tiles.py — Top 20 Tiles (CF) with fixed image, colored role tags, emoji flags
+# app_top20_tiles.py — Top 20 Tiles (CF) with fixed image, colored role tags, proper flags (incl. ENG/SCT/WLS)
 # Requirements: streamlit, pandas, numpy
 
-import io
-import re
-import math
-import unicodedata
+import io, re, math, unicodedata
 from pathlib import Path
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -20,409 +16,281 @@ st.caption(
 )
 
 # ----------------- STYLE -----------------
-st.markdown(
-    """
-    <style>
-      :root { --bg: #0f1115; --card: #161a22; --muted: #a8b3cf; --soft: #202633; }
-      .block-container { padding-top: 0.8rem; }
-      body { background-color: var(--bg); font-family: system-ui, -apple-system, "Segoe UI", "Segoe UI Emoji", Roboto, Helvetica, Arial, sans-serif; }
-      .wrap { display:flex; justify-content:center; }
-      .player-card {
-        width:min(420px, 96%);
-        display:grid;
-        grid-template-columns: 96px 1fr 48px; /* photo | content | rank */
-        gap:12px;
-        align-items:center;
-        background:var(--card);
-        border:1px solid #252b3a;
-        border-radius:18px;
-        padding:16px;
-      }
-      .avatar {
-        width:96px; height:96px; border-radius:12px;
-        background:#0b0d12 url('https://i.redd.it/43axcjdu59nd1.jpeg') center/cover no-repeat;
-        border:1px solid #2a3145;
-      }
-      .leftcol { display:flex; flex-direction:column; align-items:center; gap:8px; }
-      .meta3 { display:grid; grid-template-columns: repeat(3, max-content); gap:8px; align-items:center; }
-      .name { font-weight:800; font-size:22px; color:#e8ecff; margin-bottom:6px; }
-      .sub { color:#a8b3cf; font-size:15px; }
-      .pill { padding:2px 10px; border-radius:9px; font-weight:800; font-size:18px; color:#0b0d12; display:inline-block; min-width:42px; text-align:center; }
-      .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:4px 0; }
-      .chip {
-        background:var(--soft); color:#cbd5f5; border:1px solid #2d3550;
-        padding:3px 10px; border-radius:10px; font-size:13px; line-height:18px;
-      }
-      .pos { color:#eaf0ff; font-weight:700; padding:4px 10px; border-radius:10px; font-size:12px; border:1px solid rgba(255,255,255,0.08); }
-      .teamline { color:#e6ebff; font-size:15px; font-weight:400; margin-top:2px; }
-      .rank { color:#94a0c6; font-weight:800; font-size:18px; text-align:right; }
-      .divider { height:12px; }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+st.markdown("""
+<style>
+  :root { --bg:#0f1115; --card:#161a22; --muted:#a8b3cf; --soft:#202633; }
+  .block-container { padding-top:.8rem; }
+  body{ background:var(--bg); font-family: system-ui,-apple-system,'Segoe UI','Segoe UI Emoji',Roboto,Helvetica,Arial,sans-serif;}
+  .wrap{ display:flex; justify-content:center; }
+  .player-card{
+    width:min(420px,96%); display:grid; grid-template-columns:96px 1fr 48px;
+    gap:12px; align-items:start; background:var(--card); border:1px solid #252b3a;
+    border-radius:18px; padding:16px;
+  }
+  .avatar{ width:96px; height:96px; border-radius:12px; background:#0b0d12 url('https://i.redd.it/43axcjdu59nd1.jpeg') center/cover no-repeat; border:1px solid #2a3145; }
+  .leftcol{ display:flex; flex-direction:column; align-items:center; gap:8px; }
+  .meta3{ display:grid; grid-template-columns: repeat(3, auto); gap:8px; align-items:center; }
+  .name{ font-weight:800; font-size:22px; color:#e8ecff; margin-bottom:6px; }
+  .sub{ color:#a8b3cf; font-size:15px; }
+  .pill{ padding:2px 10px; border-radius:9px; font-weight:800; font-size:18px; color:#0b0d12; display:inline-block; min-width:42px; text-align:center; }
+  .row{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:4px 0; }
+  .chip{ background:var(--soft); color:#cbd5f5; border:1px solid #2d3550; padding:3px 10px; border-radius:10px; font-size:13px; line-height:18px; }
+  .flagchip{ display:inline-flex; align-items:center; gap:6px; background:var(--soft); color:#cbd5f5; border:1px solid #2d3550; padding:2px 8px; border-radius:10px; font-size:13px; line-height:18px; height:22px;}
+  .flagchip img{ width:18px; height:14px; border-radius:2px; display:block; }
+  .pos{ color:#eaf0ff; font-weight:700; padding:4px 10px; border-radius:10px; font-size:12px; border:1px solid rgba(255,255,255,.08); }
+  .teamline{ color:#e6ebff; font-size:15px; font-weight:400; margin-top:2px; }
+  .rank{ color:#94a0c6; font-weight:800; font-size:18px; text-align:right; }
+  .divider{ height:12px; }
+</style>
+""", unsafe_allow_html=True)
 
 # ----------------- CONFIG -----------------
-FALLBACK_URL = "https://i.redd.it/43axcjdu59nd1.jpeg"
-
 INCLUDED_LEAGUES = [
-    'England 1.', 'England 2.', 'England 3.', 'England 4.', 'England 5.',
-    'England 6.', 'England 7.', 'England 8.', 'England 9.', 'England 10.',
-    'Albania 1.', 'Algeria 1.', 'Andorra 1.', 'Argentina 1.', 'Armenia 1.',
-    'Australia 1.', 'Austria 1.', 'Austria 2.', 'Azerbaijan 1.', 'Belgium 1.',
-    'Belgium 2.', 'Bolivia 1.', 'Bosnia 1.', 'Brazil 1.', 'Brazil 2.', 'Brazil 3.',
-    'Bulgaria 1.', 'Canada 1.', 'Chile 1.', 'Colombia 1.', 'Costa Rica 1.',
-    'Croatia 1.', 'Cyprus 1.', 'Czech 1.', 'Czech 2.', 'Denmark 1.', 'Denmark 2.',
-    'Ecuador 1.', 'Egypt 1.', 'Estonia 1.', 'Finland 1.', 'France 1.', 'France 2.',
-    'France 3.', 'Georgia 1.', 'Germany 1.', 'Germany 2.', 'Germany 3.', 'Germany 4.',
-    'Greece 1.', 'Hungary 1.', 'Iceland 1.', 'Israel 1.', 'Israel 2.', 'Italy 1.',
-    'Italy 2.', 'Italy 3.', 'Japan 1.', 'Japan 2.', 'Kazakhstan 1.', 'Korea 1.',
-    'Latvia 1.', 'Lithuania 1.', 'Malta 1.', 'Mexico 1.', 'Moldova 1.', 'Morocco 1.',
-    'Netherlands 1.', 'Netherlands 2.', 'North Macedonia 1.', 'Northern Ireland 1.',
-    'Norway 1.', 'Norway 2.', 'Paraguay 1.', 'Peru 1.', 'Poland 1.', 'Poland 2.',
-    'Portugal 1.', 'Portugal 2.', 'Portugal 3.', 'Qatar 1.', 'Ireland 1.', 'Romania 1.',
-    'Russia 1.', 'Saudi 1.', 'Scotland 1.', 'Scotland 2.', 'Scotland 3.', 'Serbia 1.',
-    'Serbia 2.', 'Slovakia 1.', 'Slovakia 2.', 'Slovenia 1.', 'Slovenia 2.', 'South Africa 1.',
-    'Spain 1.', 'Spain 2.', 'Spain 3.', 'Sweden 1.', 'Sweden 2.', 'Switzerland 1.',
-    'Switzerland 2.', 'Tunisia 1.', 'Turkey 1.', 'Turkey 2.', 'Ukraine 1.', 'UAE 1.',
-    'USA 1.', 'USA 2.', 'Uruguay 1.', 'Uzbekistan 1.', 'Venezuela 1.', 'Wales 1.'
+    'England 1.','England 2.','England 3.','England 4.','England 5.','England 6.','England 7.','England 8.','England 9.','England 10.',
+    'Albania 1.','Algeria 1.','Andorra 1.','Argentina 1.','Armenia 1.','Australia 1.','Austria 1.','Austria 2.','Azerbaijan 1.',
+    'Belgium 1.','Belgium 2.','Bolivia 1.','Bosnia 1.','Brazil 1.','Brazil 2.','Brazil 3.','Bulgaria 1.','Canada 1.','Chile 1.',
+    'Colombia 1.','Costa Rica 1.','Croatia 1.','Cyprus 1.','Czech 1.','Czech 2.','Denmark 1.','Denmark 2.','Ecuador 1.','Egypt 1.',
+    'Estonia 1.','Finland 1.','France 1.','France 2.','France 3.','Georgia 1.','Germany 1.','Germany 2.','Germany 3.','Germany 4.',
+    'Greece 1.','Hungary 1.','Iceland 1.','Israel 1.','Israel 2.','Italy 1.','Italy 2.','Italy 3.','Japan 1.','Japan 2.','Kazakhstan 1.',
+    'Korea 1.','Latvia 1.','Lithuania 1.','Malta 1.','Mexico 1.','Moldova 1.','Morocco 1.','Netherlands 1.','Netherlands 2.',
+    'North Macedonia 1.','Northern Ireland 1.','Norway 1.','Norway 2.','Paraguay 1.','Peru 1.','Poland 1.','Poland 2.','Portugal 1.',
+    'Portugal 2.','Portugal 3.','Qatar 1.','Ireland 1.','Romania 1.','Russia 1.','Saudi 1.','Scotland 1.','Scotland 2.','Scotland 3.',
+    'Serbia 1.','Serbia 2.','Slovakia 1.','Slovakia 2.','Slovenia 1.','Slovenia 2.','South Africa 1.','Spain 1.','Spain 2.','Spain 3.',
+    'Sweden 1.','Sweden 2.','Switzerland 1.','Switzerland 2.','Tunisia 1.','Turkey 1.','Turkey 2.','Ukraine 1.','UAE 1.','USA 1.',
+    'USA 2.','Uruguay 1.','Uzbekistan 1.','Venezuela 1.','Wales 1.'
 ]
 
 FEATURES = [
-    'Defensive duels per 90', 'Defensive duels won, %',
-    'Aerial duels per 90', 'Aerial duels won, %',
-    'PAdj Interceptions', 'Non-penalty goals per 90', 'xG per 90',
-    'Shots per 90', 'Shots on target, %', 'Goal conversion, %',
-    'Crosses per 90', 'Accurate crosses, %', 'Dribbles per 90',
-    'Successful dribbles, %', 'Head goals per 90', 'Key passes per 90',
-    'Touches in box per 90', 'Progressive runs per 90', 'Accelerations per 90',
-    'Passes per 90', 'Accurate passes, %', 'xA per 90',
-    'Passes to penalty area per 90', 'Accurate passes to penalty area, %',
-    'Deep completions per 90', 'Smart passes per 90',
+    'Defensive duels per 90','Defensive duels won, %','Aerial duels per 90','Aerial duels won, %','PAdj Interceptions',
+    'Non-penalty goals per 90','xG per 90','Shots per 90','Shots on target, %','Goal conversion, %','Crosses per 90',
+    'Accurate crosses, %','Dribbles per 90','Successful dribbles, %','Head goals per 90','Key passes per 90',
+    'Touches in box per 90','Progressive runs per 90','Accelerations per 90','Passes per 90','Accurate passes, %',
+    'xA per 90','Passes to penalty area per 90','Accurate passes to penalty area, %','Deep completions per 90','Smart passes per 90',
 ]
-
 ROLES = {
-    'Goal Threat CF': {
-        'desc': "High shot & xG volume, box presence, consistent SoT and finishing.",
-        'metrics': {
-            'Non-penalty goals per 90': 3, 'Shots per 90': 1.5, 'xG per 90': 3,
-            'Touches in box per 90': 1, 'Shots on target, %': 0.5
-        }
-    },
-    'Link-Up CF': {
-        'desc': "Combine & create; link play; progress & deliver to the penalty area.",
-        'metrics': {
-            'Passes per 90': 2, 'Passes to penalty area per 90': 1.5,
-            'Deep completions per 90': 1, 'Smart passes per 90': 1.5,
-            'Accurate passes, %': 1.5, 'Key passes per 90': 1,
-            'Dribbles per 90': 2, 'Successful dribbles, %': 1,
-            'Progressive runs per 90': 2, 'xA per 90': 3
-        }
-    },
-    'Target Man CF': {
-        'desc': "Aerial presence & duel dominance for a focal point game.",
-        'metrics': {
-            'Aerial duels won, %': 4,
-            'Aerial duels per 90': 3,
-        }
-    },
-    'All in': {
-        'desc': "Blend of creation + scoring; balanced all-round attacking profile.",
-        'metrics': { 'xA per 90': 2, 'Dribbles per 90': 2, 'xG per 90': 3, 'Non-penalty goals per 90': 3 }
-    }
+    'Goal Threat CF': {'metrics':{'Non-penalty goals per 90':3,'Shots per 90':1.5,'xG per 90':3,'Touches in box per 90':1,'Shots on target, %':0.5}},
+    'Link-Up CF':     {'metrics':{'Passes per 90':2,'Passes to penalty area per 90':1.5,'Deep completions per 90':1,'Smart passes per 90':1.5,
+                                  'Accurate passes, %':1.5,'Key passes per 90':1,'Dribbles per 90':2,'Successful dribbles, %':1,'Progressive runs per 90':2,'xA per 90':3}},
+    'Target Man CF':  {'metrics':{'Aerial duels won, %':4,'Aerial duels per 90':3}},
+    'All in':         {'metrics':{'xA per 90':2,'Dribbles per 90':2,'xG per 90':3,'Non-penalty goals per 90':3}},
 }
-
 LEAGUE_STRENGTHS = {
-    'England 1.':100.00,'Italy 1.':97.14,'Spain 1.':94.29,'Germany 1.':94.29,'France 1.':91.43,
-    'Brazil 1.':82.86,'England 2.':71.43,'Portugal 1.':71.43,'Argentina 1.':71.43,
-    'Belgium 1.':68.57,'Mexico 1.':68.57,'Turkey 1.':65.71,'Germany 2.':65.71,'Spain 2.':65.71,
-    'France 2.':65.71,'USA 1.':65.71,'Russia 1.':65.71,'Colombia 1.':62.86,'Netherlands 1.':62.86,
-    'Austria 1.':62.86,'Switzerland 1.':62.86,'Denmark 1.':62.86,'Croatia 1.':62.86,
-    'Japan 1.':62.86,'Korea 1.':62.86,'Italy 2.':62.86,'Czech 1.':57.14,'Norway 1.':57.14,
-    'Poland 1.':57.14,'Romania 1.':57.14,'Israel 1.':57.14,'Algeria 1.':57.14,'Paraguay 1.':57.14,
-    'Saudi 1.':57.14,'Uruguay 1.':57.14,'Morocco 1.':57.00,'Brazil 2.':56.00,'Ukraine 1.':55.00,
-    'Ecuador 1.':54.29,'Spain 3.':54.29,'Scotland 1.':58.00,'Chile 1.':51.43,'Cyprus 1.':51.43,
-    'Portugal 2.':51.43,'Slovakia 1.':51.43,'Australia 1.':51.43,'Hungary 1.':51.43,'Egypt 1.':51.43,
-    'England 3.':51.43,'France 3.':48.00,'Japan 2.':48.00,'Bulgaria 1.':48.57,'Slovenia 1.':48.57,
-    'Venezuela 1.':48.00,'Germany 3.':45.71,'Albania 1.':44.00,'Serbia 1.':42.86,'Belgium 2.':42.86,
-    'Bosnia 1.':42.86,'Kosovo 1.':42.86,'Nigeria 1.':42.86,'Azerbaijan 1.':50.00,'Bolivia 1.':50.00,
-    'Costa Rica 1.':50.00,'South Africa 1.':50.00,'UAE 1.':50.00,'Georgia 1.':40.00,'Finland 1.':40.00,
-    'Italy 3.':40.00,'Peru 1.':40.00,'Tunisia 1.':40.00,'USA 2.':40.00,'Armenia 1.':40.00,
-    'North Macedonia 1.':40.00,'Qatar 1.':40.00,'Uzbekistan 1.':42.00,'Norway 2.':42.00,
-    'Kazakhstan 1.':42.00,'Poland 2.':38.00,'Denmark 2.':37.00,'Czech 2.':37.14,'Israel 2.':37.14,
-    'Netherlands 2.':37.14,'Switzerland 2.':37.14,'Iceland 1.':34.29,'Ireland 1.':34.29,'Sweden 2.':34.29,
-    'Germany 4.':34.29,'Malta 1.':30.00,'Turkey 2.':31.43,'Canada 1.':28.57,'England 4.':28.57,
-    'Scotland 2.':28.57,'Moldova 1.':28.57,'Austria 2.':25.71,'Lithuania 1.':25.71,'Brazil 3.':25.00,
-    'England 7.':25.00,'Slovenia 2.':22.00,'Latvia 1.':22.86,'Serbia 2.':20.00,'Slovakia 2.':20.00,
-    'England 9.':20.00,'England 8.':15.00,'Montenegro 1.':14.29,'Wales 1.':12.00,'Portugal 3.':11.43,
-    'Northern Ireland 1.':11.43,'England 10.':10.00,'Scotland 3.':10.00,'England 6.':10.00
+    'England 1.':100.00,'Italy 1.':97.14,'Spain 1.':94.29,'Germany 1.':94.29,'France 1.':91.43,'Brazil 1.':82.86,
+    'England 2.':71.43,'Portugal 1.':71.43,'Argentina 1.':71.43,'Belgium 1.':68.57,'Mexico 1.':68.57,'Turkey 1.':65.71,
+    'Germany 2.':65.71,'Spain 2.':65.71,'France 2.':65.71,'USA 1.':65.71,'Russia 1.':65.71,'Colombia 1.':62.86,
+    'Netherlands 1.':62.86,'Austria 1.':62.86,'Switzerland 1.':62.86,'Denmark 1.':62.86,'Croatia 1.':62.86,'Japan 1.':62.86,
+    'Korea 1.':62.86,'Italy 2.':62.86,'Czech 1.':57.14,'Norway 1.':57.14,'Poland 1.':57.14,'Romania 1.':57.14,'Israel 1.':57.14,
+    'Algeria 1.':57.14,'Paraguay 1.':57.14,'Saudi 1.':57.14,'Uruguay 1.':57.14,'Morocco 1.':57.0,'Brazil 2.':56.0,'Ukraine 1.':55.0,
+    'Ecuador 1.':54.29,'Spain 3.':54.29,'Scotland 1.':58.0,'Chile 1.':51.43,'Cyprus 1.':51.43,'Portugal 2.':51.43,'Slovakia 1.':51.43,
+    'Australia 1.':51.43,'Hungary 1.':51.43,'Egypt 1.':51.43,'England 3.':51.43,'France 3.':48.0,'Japan 2.':48.0,'Bulgaria 1.':48.57,
+    'Slovenia 1.':48.57,'Venezuela 1.':48.0,'Germany 3.':45.71,'Albania 1.':44.0,'Serbia 1.':42.86,'Belgium 2.':42.86,'Bosnia 1.':42.86,
+    'Kosovo 1.':42.86,'Nigeria 1.':42.86,'Azerbaijan 1.':50.0,'Bolivia 1.':50.0,'Costa Rica 1.':50.0,'South Africa 1.':50.0,'UAE 1.':50.0,
+    'Georgia 1.':40.0,'Finland 1.':40.0,'Italy 3.':40.0,'Peru 1.':40.0,'Tunisia 1.':40.0,'USA 2.':40.0,'Armenia 1.':40.0,
+    'North Macedonia 1.':40.0,'Qatar 1.':40.0,'Uzbekistan 1.':42.0,'Norway 2.':42.0,'Kazakhstan 1.':42.0,'Poland 2.':38.0,
+    'Denmark 2.':37.0,'Czech 2.':37.14,'Israel 2.':37.14,'Netherlands 2.':37.14,'Switzerland 2.':37.14,'Iceland 1.':34.29,
+    'Ireland 1.':34.29,'Sweden 2.':34.29,'Germany 4.':34.29,'Malta 1.':30.0,'Turkey 2.':31.43,'Canada 1.':28.57,'England 4.':28.57,
+    'Scotland 2.':28.57,'Moldova 1.':28.57,'Austria 2.':25.71,'Lithuania 1.':25.71,'Brazil 3.':25.0,'England 7.':25.0,'Slovenia 2.':22.0,
+    'Latvia 1.':22.86,'Serbia 2.':20.0,'Slovakia 2.':20.0,'England 9.':20.0,'England 8.':15.0,'Montenegro 1.':14.29,'Wales 1.':12.0,
+    'Portugal 3.':11.43,'Northern Ireland 1.':11.43,'England 10.':10.0,'Scotland 3.':10.0,'England 6.':10.0
 }
-
 REQUIRED_BASE = {"Player","Team","League","Age","Position","Minutes played","Market value","Contract expires","Goals","Birth country"}
 
 # ----------------- DATA LOADING -----------------
 @st.cache_data(show_spinner=False)
-def _read_csv_from_path(path_str: str) -> pd.DataFrame:
-    return pd.read_csv(path_str)
-
+def _read_csv_from_path(p:str)->pd.DataFrame: return pd.read_csv(p)
 @st.cache_data(show_spinner=False)
-def _read_csv_from_bytes(data: bytes) -> pd.DataFrame:
-    return pd.read_csv(io.BytesIO(data))
-
-def load_df(csv_name: str = "WORLDJUNE25.csv") -> pd.DataFrame:
-    candidates = [
-        Path.cwd() / csv_name,
-        Path(__file__).resolve().parent / csv_name if "__file__" in globals() else Path.cwd() / csv_name
-    ]
+def _read_csv_from_bytes(b:bytes)->pd.DataFrame: return pd.read_csv(io.BytesIO(b))
+def load_df(name="WORLDJUNE25.csv")->pd.DataFrame:
+    candidates=[Path.cwd()/name]
+    if "__file__" in globals(): candidates+=[Path(__file__).resolve().parent/name]
     for p in candidates:
-        if p.exists():
-            return _read_csv_from_path(str(p))
-    st.warning(f"Could not find **{csv_name}**. Upload below.")
-    up = st.file_uploader("Upload WORLDJUNE25.csv", type=["csv"])
-    if up is None:
-        st.stop()
+        if p.exists(): return _read_csv_from_path(str(p))
+    st.warning(f"Could not find **{name}**. Upload below.")
+    up=st.file_uploader("Upload WORLDJUNE25.csv",type=["csv"])
+    if up is None: st.stop()
     return _read_csv_from_bytes(up.getvalue())
-
-df = load_df()
+df=load_df()
 
 # ----------------- SIDEBAR -----------------
-PRESETS = {
+PRESETS={
     "All leagues": INCLUDED_LEAGUES,
     "Big 5": ['England 1.','Spain 1.','Italy 1.','Germany 1.','France 1.'],
     "Top 15-ish": ['England 1.','Spain 1.','Italy 1.','Germany 1.','France 1.','Portugal 1.','Netherlands 1.','Belgium 1.','Turkey 1.','Scotland 1.','Austria 1.','Denmark 1.','Switzerland 1.','Brazil 1.','Argentina 1.'],
-    "UK & Ireland": ['England 1.','England 2.','England 3.','England 4.','Scotland 1.','Scotland 2.','Wales 1.','Ireland 1.','Northern Ireland 1.']
+    "UK & Ireland": ['England 1.','England 2.','England 3.','England 4.','Scotland 1.','Scotland 2.','Wales 1.','Ireland 1.','Northern Ireland 1.'],
 }
-
 with st.sidebar:
     st.header("Filters")
-
-    preset = st.selectbox("League preset", list(PRESETS.keys()), index=0)
-    leagues_avail = sorted(set(INCLUDED_LEAGUES) | set(df.get("League", pd.Series([])).dropna().unique()))
-    default_sel = PRESETS[preset]
-    leagues_sel = st.multiselect("Leagues", leagues_avail, default=default_sel)
-
-    # β applies to all role scores and ranking
-    beta = st.slider("League weighting beta (applies to all scores)", 0.0, 1.0, 0.40, 0.05)
-
-    df["Minutes played"] = pd.to_numeric(df["Minutes played"], errors="coerce")
-    df["Age"] = pd.to_numeric(df["Age"], errors="coerce")
-    min_minutes, max_minutes = st.slider("Minutes played", 0, 5000, (500, 5000))
-    age_min_data = int(np.nanmin(df["Age"])) if df["Age"].notna().any() else 14
-    age_max_data = int(np.nanmax(df["Age"])) if df["Age"].notna().any() else 45
-    min_age, max_age = st.slider("Age", age_min_data, age_max_data, (16, 40))
-
-    df["Contract expires"] = pd.to_datetime(df["Contract expires"], errors="coerce")
-    apply_contract = st.checkbox("Filter by contract expiry", value=False)
-    cutoff_year = st.slider("Max contract year (inclusive)", 2025, 2030, 2026)
-
-    df["Market value"] = pd.to_numeric(df["Market value"], errors="coerce")
-    mv_col = "Market value"
-    mv_max_raw = int(np.nanmax(df[mv_col])) if df[mv_col].notna().any() else 50_000_000
-    mv_cap = int(math.ceil(mv_max_raw / 5_000_000) * 5_000_000)
+    preset=st.selectbox("League preset",list(PRESETS.keys()),index=0)
+    leagues_avail=sorted(set(INCLUDED_LEAGUES)|set(df.get("League",pd.Series([])).dropna().unique()))
+    leagues_sel=st.multiselect("Leagues",leagues_avail,default=PRESETS[preset])
+    beta=st.slider("League weighting beta (applies to all scores)",0.0,1.0,0.40,0.05)
+    df["Minutes played"]=pd.to_numeric(df["Minutes played"],errors="coerce")
+    df["Age"]=pd.to_numeric(df["Age"],errors="coerce")
+    min_minutes,max_minutes=st.slider("Minutes played",0,5000,(500,5000))
+    a_min=int(np.nanmin(df["Age"])) if df["Age"].notna().any() else 14
+    a_max=int(np.nanmax(df["Age"])) if df["Age"].notna().any() else 45
+    min_age,max_age=st.slider("Age",a_min,a_max,(16,40))
+    df["Contract expires"]=pd.to_datetime(df["Contract expires"],errors="coerce")
+    apply_contract=st.checkbox("Filter by contract expiry",False)
+    cutoff_year=st.slider("Max contract year (inclusive)",2025,2030,2026)
+    df["Market value"]=pd.to_numeric(df["Market value"],errors="coerce")
+    mv_max=int(np.nanmax(df["Market value"])) if df["Market value"].notna().any() else 50_000_000
+    mv_cap=int(math.ceil(mv_max/5_000_000)*5_000_000)
     st.markdown("**Market value (€)**")
-    use_m = st.checkbox("Adjust in millions", True)
+    use_m=st.checkbox("Adjust in millions",True)
     if use_m:
-        max_m = int(mv_cap // 1_000_000)
-        mv_min_m, mv_max_m = st.slider("Range (M€)", 0, max_m, (0, max_m))
-        min_value = mv_min_m * 1_000_000
-        max_value = mv_max_m * 1_000_000
+        max_m=int(mv_cap//1_000_000)
+        mv_min_m,mv_max_m=st.slider("Range (M€)",0,max_m,(0,max_m))
+        min_value=mv_min_m*1_000_000; max_value=mv_max_m*1_000_000
     else:
-        min_value, max_value = st.slider("Range (€)", 0, mv_cap, (0, mv_cap), step=100_000)
-
-    min_strength, max_strength = st.slider("League quality (strength)", 0, 101, (0, 101))
-    top_n = st.number_input("How many tiles", 5, 100, 20, 5)
+        min_value,max_value=st.slider("Range (€)",0,mv_cap,(0,mv_cap),step=100_000)
+    min_strength,max_strength=st.slider("League quality (strength)",0,101,(0,101))
+    top_n=st.number_input("How many tiles",5,100,20,5)
 
 # ----------------- VALIDATION -----------------
-missing = [c for c in REQUIRED_BASE if c not in df.columns]
-if missing:
-    st.error(f"Dataset missing required base columns: {missing}")
-    st.stop()
-missing_feats = [c for c in FEATURES if c not in df.columns]
-if missing_feats:
-    st.error(f"Dataset missing required feature columns: {missing_feats}")
-    st.stop()
+missing=[c for c in REQUIRED_BASE if c not in df.columns]
+if missing: st.error(f"Dataset missing required base columns: {missing}"); st.stop()
+missing_feats=[c for c in FEATURES if c not in df.columns]
+if missing_feats: st.error(f"Dataset missing required feature columns: {missing_feats}"); st.stop()
 
 # ----------------- FILTER POOL -----------------
-df_f = df[df["League"].isin(leagues_sel)].copy()
-df_f = df_f[df_f["Position"].astype(str).str.upper().str.startswith("CF")]  # Only CF pool
-df_f = df_f[df_f["Minutes played"].between(min_minutes, max_minutes)]
-df_f = df_f[df_f["Age"].between(min_age, max_age)]
-if apply_contract:
-    df_f = df_f[df_f["Contract expires"].dt.year <= cutoff_year]
+df_f=df[df["League"].isin(leagues_sel)].copy()
+df_f=df_f[df_f["Position"].astype(str).str.upper().str.startswith("CF")]
+df_f=df_f[df_f["Minutes played"].between(min_minutes,max_minutes)]
+df_f=df_f[df_f["Age"].between(min_age,max_age)]
+if apply_contract: df_f=df_f[df_f["Contract expires"].dt.year<=cutoff_year]
+for c in FEATURES: df_f[c]=pd.to_numeric(df_f[c],errors="coerce")
+df_f=df_f.dropna(subset=FEATURES)
+df_f["League Strength"]=df_f["League"].map(LEAGUE_STRENGTHS).fillna(50.0)
+df_f=df_f[(df_f["League Strength"]>=float(min_strength))&(df_f["League Strength"]<=float(max_strength))]
+df_f=df_f[(df_f["Market value"]>=min_value)&(df_f["Market value"]<=max_value)]
+if df_f.empty: st.warning("No players after filters. Loosen filters."); st.stop()
 
-for c in FEATURES:
-    df_f[c] = pd.to_numeric(df_f[c], errors="coerce")
-df_f = df_f.dropna(subset=FEATURES)
-
-df_f["League Strength"] = df_f["League"].map(LEAGUE_STRENGTHS).fillna(50.0)
-df_f = df_f[(df_f["League Strength"] >= float(min_strength)) & (df_f["League Strength"] <= float(max_strength))]
-df_f = df_f[(df_f["Market value"] >= min_value) & (df_f["Market value"] <= max_value)]
-
-if df_f.empty:
-    st.warning("No players after filters. Loosen filters.")
-    st.stop()  # prevents NameError later
-
-# ----------------- Percentiles per league -----------------
+# ----------------- Percentiles -----------------
 for feat in FEATURES:
-    df_f[f"{feat} Percentile"] = df_f.groupby("League")[feat].transform(lambda x: x.rank(pct=True) * 100.0)
+    df_f[f"{feat} Percentile"]=df_f.groupby("League")[feat].transform(lambda x: x.rank(pct=True)*100.0)
 
-# ----------------- Role scoring helpers -----------------
-def role_score(df_in: pd.DataFrame, metrics: dict) -> pd.Series:
-    total_w = sum(metrics.values()) if metrics else 1.0
-    wsum = np.zeros(len(df_in))
-    for m, w in metrics.items():
-        col = f"{m} Percentile"
-        if col in df_in.columns:
-            wsum += df_in[col].values * w
-    return wsum / total_w
+def role_score(df_in:pd.DataFrame,metrics:dict)->pd.Series:
+    total_w=sum(metrics.values()) if metrics else 1.0
+    wsum=np.zeros(len(df_in))
+    for m,w in metrics.items():
+        col=f"{m} Percentile"
+        if col in df_in.columns: wsum+=df_in[col].values*w
+    return wsum/total_w
 
-# Raw role scores (0..100 by league percentile)
-df_f["Score_GT_raw"]  = role_score(df_f, ROLES["Goal Threat CF"]["metrics"])
-df_f["Score_LU_raw"]  = role_score(df_f, ROLES["Link-Up CF"]["metrics"])
-df_f["Score_TM_raw"]  = role_score(df_f, ROLES["Target Man CF"]["metrics"])
-df_f["Score_ALL_raw"] = role_score(df_f, ROLES["All in"]["metrics"])
+# raw scores
+df_f["Score_GT_raw"]=role_score(df_f,ROLES["Goal Threat CF"]["metrics"])
+df_f["Score_LU_raw"]=role_score(df_f,ROLES["Link-Up CF"]["metrics"])
+df_f["Score_TM_raw"]=role_score(df_f,ROLES["Target Man CF"]["metrics"])
+df_f["Score_ALL_raw"]=role_score(df_f,ROLES["All in"]["metrics"])
+# league-weighted
+ls=df_f["League Strength"].astype(float)
+df_f["Score_GT"]=(1-beta)*df_f["Score_GT_raw"]+beta*ls
+df_f["Score_LU"]=(1-beta)*df_f["Score_LU_raw"]+beta*ls
+df_f["Score_TM"]=(1-beta)*df_f["Score_TM_raw"]+beta*ls
+df_f["Score_ALL"]=(1-beta)*df_f["Score_ALL_raw"]+beta*ls
 
-# League-weighted by sidebar β
-ls = df_f["League Strength"].astype(float)
-df_f["Score_GT"]  = (1 - beta) * df_f["Score_GT_raw"]  + beta * ls
-df_f["Score_LU"]  = (1 - beta) * df_f["Score_LU_raw"]  + beta * ls
-df_f["Score_TM"]  = (1 - beta) * df_f["Score_TM_raw"]  + beta * ls
-df_f["Score_ALL"] = (1 - beta) * df_f["Score_ALL_raw"] + beta * ls
+ranked=df_f.sort_values("Score_ALL",ascending=False).head(int(top_n)).copy().reset_index(drop=True)
 
-# ----------------- Rank & select -----------------
-ranked = df_f.sort_values("Score_ALL", ascending=False).head(int(top_n)).copy().reset_index(drop=True)
+# ----------------- Colors -----------------
+PALETTE=[(0,(208,2,27)),(50,(245,166,35)),(65,(248,231,28)),(75,(126,211,33)),(85,(65,117,5)),(100,(40,90,4))]
+def _lerp(a,b,t): return tuple(int(round(a[i]+(b[i]-a[i])*t)) for i in range(3))
+def rating_color(v:float)->str:
+    v=max(0.0,min(100.0,float(v)))
+    for i in range(len(PALETTE)-1):
+        x0,c0=PALETTE[i]; x1,c1=PALETTE[i+1]
+        if v<=x1:
+            t=0 if x1==x0 else (v-x0)/(x1-x0); r,g,b=_lerp(c0,c1,t); return f"rgb({r},{g},{b})"
+    r,g,b=PALETTE[-1][1]; return f"rgb({r},{g},{b})"
 
-# ----------------- Color tools -----------------
-PALETTE = [
-    (0,   (208,  2, 27)),
-    (50,  (245,166, 35)),
-    (65,  (248,231, 28)),
-    (75,  (126,211, 33)),
-    (85,  (65, 117,  5)),
-    (100, (40,  90,  4)),
-]
-def _lerp(a, b, t): return tuple(int(round(a[i] + (b[i]-a[i]) * t)) for i in range(3))
-def rating_color(v: float) -> str:
-    v = max(0.0, min(100.0, float(v)))
-    for i in range(len(PALETTE) - 1):
-        x0, c0 = PALETTE[i]; x1, c1 = PALETTE[i+1]
-        if v <= x1:
-            t = 0 if x1 == x0 else (v - x0) / (x1 - x0)
-            r,g,b = _lerp(c0, c1, t); return f"rgb({r},{g},{b})"
-    r,g,b = PALETTE[-1][1]; return f"rgb({r},{g},{b})"
-
-# Position chip colors
-POS_COLORS = {
-    "CF": "#183153",  # dark blue
-    # Blue family
-    "LWF": "#1f3f8c","LW":"#1f3f8c","LAMF":"#1f3f8c","RW":"#1f3f8c","RWF":"#1f3f8c","RAMF":"#1f3f8c",
-    # Light green / green
-    "AMF":"#87d37c","LCMF":"#2ecc71","RCMF":"#2ecc71",
-    # Dark green
-    "RDMF":"#0e7a3b","LDMF":"#0e7a3b",
-    # Yellow
-    "LWB":"#e7d000","RWB":"#e7d000",
-    # Orange
-    "LB":"#ff8a00","RB":"#ff8a00",
-    # Dark orange
-    "RCB":"#c45a00","CB":"#c45a00","LCB":"#c45a00",
+POS_COLORS={
+    "CF":"#183153","LWF":"#1f3f8c","LW":"#1f3f8c","LAMF":"#1f3f8c","RW":"#1f3f8c","RWF":"#1f3f8c","RAMF":"#1f3f8c",
+    "AMF":"#87d37c","LCMF":"#2ecc71","RCMF":"#2ecc71","RDMF":"#0e7a3b","LDMF":"#0e7a3b",
+    "LWB":"#e7d000","RWB":"#e7d000","LB":"#ff8a00","RB":"#ff8a00","RCB":"#c45a00","CB":"#c45a00","LCB":"#c45a00",
 }
-def chip_color(pos_code: str) -> str:
-    return POS_COLORS.get(pos_code.strip().upper(), "#2d3550")
+def chip_color(p:str)->str: return POS_COLORS.get(p.strip().upper(),"#2d3550")
 
-# Flags from Birth country → emoji (includes GB subdivisions where possible)
-# England/Scotland/Wales have emoji; Northern Ireland does not → 🇬🇧 as fallback.
-SUBDIV_FLAGS = {
-    "england": "🏴",   # U+1F3F4 + tag seq for 'eng'
-    "scotland": "🏴",  # 'sct'
-    "wales": "🏴",     # 'wls'
-    "great britain": "🇬🇧", "united kingdom": "🇬🇧", "uk": "🇬🇧", "gb": "🇬🇧",
-    "northern ireland": "🇬🇧",  # no dedicated emoji
+# ----------------- Flags (emoji + Twemoji images for ENG/SCT/WLS) -----------------
+# Twemoji CDN codes for UK subdivisions
+TWEMOJI_SPECIAL = {
+    "england": "1f3f4-e0067-e0062-e0065-e006e-e0067-e007f",  # 🏴
+    "scotland": "1f3f4-e0067-e0062-e0073-e0063-e006f-e0074-e007f",  # 🏴
+    "wales": "1f3f4-e0067-e0062-e0077-e0061-e006c-e0065-e007f",  # 🏴
 }
-# Country name → ISO alpha-2 (for standard regional-indicator flags)
 COUNTRY_TO_CC = {
-    "republic of ireland":"IE","ireland":"IE","spain":"ES","france":"FR","germany":"DE","italy":"IT","portugal":"PT",
-    "netherlands":"NL","belgium":"BE","austria":"AT","switzerland":"CH","denmark":"DK","sweden":"SE","norway":"NO",
-    "croatia":"HR","serbia":"RS","bosnia and herzegovina":"BA","slovenia":"SI","slovakia":"SK","czech republic":"CZ","czechia":"CZ",
-    "poland":"PL","romania":"RO","bulgaria":"BG","greece":"GR","hungary":"HU","turkey":"TR",
-    "brazil":"BR","argentina":"AR","uruguay":"UY","chile":"CL","colombia":"CO","peru":"PE","mexico":"MX",
-    "united states":"US","usa":"US","canada":"CA","russia":"RU","ukraine":"UA","georgia":"GE","kazakhstan":"KZ",
-    "japan":"JP","korea":"KR","south korea":"KR","china":"CN",
-    "australia":"AU","new zealand":"NZ",
-    "algeria":"DZ","morocco":"MA","tunisia":"TN","nigeria":"NG","ghana":"GH","egypt":"EG","ivory coast":"CI","cote d'ivoire":"CI","senegal":"SN",
-    "paraguay":"PY","venezuela":"VE","ecuador":"EC","bolivia":"BO","qatar":"QA","saudi arabia":"SA","iran":"IR","iraq":"IQ","israel":"IL","iceland":"IS","finland":"FI","estonia":"EE","latvia":"LV","lithuania":"LT","moldova":"MD","armenia":"AM","azerbaijan":"AZ","north macedonia":"MK","andorra":"AD","albania":"AL","malta":"MT","cyprus":"CY","luxembourg":"LU","monaco":"MC","san marino":"SM","montenegro":"ME","kosovo":"XK","uruguay":"UY","uae":"AE","united arab emirates":"AE","south africa":"ZA"
+    "united kingdom":"gb","great britain":"gb","northern ireland":"gb",
+    "ireland":"ie","republic of ireland":"ie",
+    "england":"eng","scotland":"sct","wales":"wls",
+    "spain":"es","france":"fr","germany":"de","italy":"it","portugal":"pt","netherlands":"nl","belgium":"be","austria":"at","switzerland":"ch",
+    "denmark":"dk","sweden":"se","norway":"no","finland":"fi","iceland":"is","poland":"pl","czech republic":"cz","czechia":"cz","slovakia":"sk",
+    "slovenia":"si","croatia":"hr","serbia":"rs","bosnia and herzegovina":"ba","montenegro":"me","kosovo":"xk","albania":"al","greece":"gr",
+    "hungary":"hu","romania":"ro","bulgaria":"bg","russia":"ru","ukraine":"ua","georgia":"ge","kazakhstan":"kz","azerbaijan":"az","armenia":"am",
+    "turkey":"tr","qatar":"qa","saudi arabia":"sa","uae":"ae","israel":"il","morocco":"ma","algeria":"dz","tunisia":"tn","egypt":"eg","nigeria":"ng",
+    "ghana":"gh","senegal":"sn","ivory coast":"ci","cote d'ivoire":"ci","south africa":"za",
+    "brazil":"br","argentina":"ar","uruguay":"uy","chile":"cl","colombia":"co","peru":"pe","ecuador":"ec","paraguay":"py","bolivia":"bo","mexico":"mx",
+    "canada":"ca","united states":"us","usa":"us","japan":"jp","korea":"kr","south korea":"kr","china":"cn","australia":"au","new zealand":"nz",
+    "latvia":"lv","lithuania":"lt","estonia":"ee","moldova":"md","north macedonia":"mk","malta":"mt","cyprus":"cy","luxembourg":"lu","andorra":"ad",
+    "monaco":"mc","san marino":"sm","montenegro":"me","wales 1.":"wls"  # just in case
 }
+def country_norm(s:str)->str:
+    if not s: return ""
+    return unicodedata.normalize("NFKD", s).encode("ascii","ignore").decode("ascii").strip().lower()
 
-def flag_emoji(country_name: str) -> str:
-    n = (country_name or "").strip()
-    if not n:
-        return ""
-    n_l = n.lower()
-    # GB subdivisions first
-    if n_l in SUBDIV_FLAGS:
-        return SUBDIV_FLAGS[n_l]
-    # normalize accents/punct
-    n_norm = unicodedata.normalize("NFKD", n_l).encode("ascii", "ignore").decode("ascii")
-    if n_norm in SUBDIV_FLAGS:
-        return SUBDIV_FLAGS[n_norm]
-    # regular country
-    cc = COUNTRY_TO_CC.get(n_l) or COUNTRY_TO_CC.get(n_norm)
-    if not cc or len(cc) != 2:
-        return ""  # unknown → show nothing
-    base = 127397
-    return chr(base + ord(cc[0].upper())) + chr(base + ord(cc[1].upper()))
+def flag_chip_html(country_name:str, age:int, contract_year:int)->str:
+    n = country_norm(country_name)
+    # UK subdivisions via twemoji images
+    if n in TWEMOJI_SPECIAL:
+        code = TWEMOJI_SPECIAL[n]
+        img = f"<img src='https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/svg/{code}.svg' alt='{country_name}'>"
+        flag = f"<span class='flagchip'>{img}</span>"
+    else:
+        cc = COUNTRY_TO_CC.get(n, "")
+        if len(cc)==2:  # standard emoji flags
+            # build emoji from regional indicators
+            base = 127397
+            emoji = chr(base + ord(cc[0].upper())) + chr(base + ord(cc[1].upper()))
+            flag = f"<span class='chip'>{emoji}</span>"
+        else:
+            flag = "<span class='chip'>—</span>"
+    age_chip = f"<span class='chip'>{age}y.o.</span>"
+    yr = f"{contract_year}" if contract_year>0 else "—"
+    contract_chip = f"<span class='chip'>{yr}</span>"
+    return f"<div class='row'>{flag}{age_chip}{contract_chip}</div>"
 
 # ----------------- RENDER -----------------
-for idx, row in ranked.iterrows():
-    rank = idx + 1
-    player = str(row.get("Player", "")) or ""
-    team = str(row.get("Team", "")) or ""
-    pos_full = str(row.get("Position", "")) or ""
-    age = int(row.get("Age", 0)) if not pd.isna(row.get("Age", np.nan)) else 0
-    contract_year = int(pd.to_datetime(row.get("Contract expires"), errors="coerce").year) if pd.notna(row.get("Contract expires")) else 0
+for idx,row in ranked.iterrows():
+    rank = idx+1
+    player = str(row.get("Player","")) or ""
+    team   = str(row.get("Team","")) or ""
+    pos_full = str(row.get("Position","")) or ""
+    age = int(row.get("Age",0)) if not pd.isna(row.get("Age",np.nan)) else 0
+    cy = pd.to_datetime(row.get("Contract expires"), errors="coerce")
+    contract_year = int(cy.year) if pd.notna(cy) else 0
+    birth_country = str(row.get("Birth country","") or "")
 
     gt_i = int(round(float(row["Score_GT"])))
     lu_i = int(round(float(row["Score_LU"])))
     tm_i = int(round(float(row["Score_TM"])))
-
-    # flag from Birth country
-    birth_country = str(row.get("Birth country", "") or "")
-    flag = flag_emoji(birth_country)
-
-    # Position chips (keep CF first if present)
-    raw_codes = re.split(r"[,/; ]+", pos_full.strip().upper())
-    codes = [c for c in raw_codes if c]
-    if "CF" in codes:
-        codes = ["CF"] + [c for c in codes if c != "CF"]
-    chips_html = ""
-    seen = set()
-    for c in codes:
-        if c in seen: 
-            continue
-        seen.add(c)
-        chips_html += f"<span class='pos' style='background:{chip_color(c)}'>{c}</span> "
-
-    gt_style = f"background:{rating_color(gt_i)};"
+    ov_style = f"background:{rating_color(gt_i)};"
     lu_style = f"background:{rating_color(lu_i)};"
     tm_style = f"background:{rating_color(tm_i)};"
 
-    # Left column meta (flag • age • contract) aligned in one row
-    flag_chip = f"<span class='chip'>{flag}</span>" if flag else "<span class='chip'>—</span>"
-    age_chip = f"<span class='chip'>{age}y.o.</span>"
-    cy_chip  = f"<span class='chip'>{contract_year if contract_year>0 else '—'}</span>"
+    # position chips (CF first)
+    codes = [c for c in re.split(r"[,/; ]+", pos_full.strip().upper()) if c]
+    if "CF" in codes: codes = ["CF"] + [c for c in codes if c!="CF"]
+    chips_html = "".join(f"<span class='pos' style='background:{chip_color(c)}'>{c}</span> " for c in dict.fromkeys(codes))
 
     st.markdown(f"""
     <div class='wrap'>
       <div class='player-card'>
         <div class='leftcol'>
           <div class='avatar'></div>
-          <div class='meta3'>{flag_chip}{age_chip}{cy_chip}</div>
+          {flag_chip_html(birth_country, age, contract_year)}
         </div>
         <div>
           <div class='name'>{player}</div>
-
           <div class='row' style='align-items:center;'>
-            <span class='pill' style='{gt_style}'>{gt_i}</span>
+            <span class='pill' style='{ov_style}'>{gt_i}</span>
             <span class='sub'>Goal Threat</span>
           </div>
           <div class='row' style='align-items:center;'>
@@ -433,7 +301,6 @@ for idx, row in ranked.iterrows():
             <span class='pill' style='{tm_style}'>{tm_i}</span>
             <span class='sub'>Target Man CF</span>
           </div>
-
           <div class='row'>{chips_html}</div>
           <div class='teamline'>{team}</div>
         </div>
@@ -442,6 +309,7 @@ for idx, row in ranked.iterrows():
     </div>
     <div class='divider'></div>
     """, unsafe_allow_html=True)
+
 
 
 
