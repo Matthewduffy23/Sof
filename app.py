@@ -166,6 +166,9 @@ def load_df(csv_name: str = "WORLDJUNE25.csv") -> pd.DataFrame:
 df = load_df()
 
 # ----------------- FOTMOB LOOKUP (name + team) -----------------
+import unicodedata, re, requests
+from urllib.parse import quote
+
 def _strip_accents(s: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFKD", str(s)) if not unicodedata.combining(c))
 
@@ -175,59 +178,106 @@ def _canon(s: str) -> str:
 
 def _similar(a: str, b: str) -> float:
     ta, tb = set(_canon(a).split()), set(_canon(b).split())
-    if not ta or not tb:
-        return 0.0
+    if not ta or not tb: return 0.0
     return len(ta & tb) / len(ta | tb)
 
+def _last_name(name: str) -> str:
+    parts = [p for p in _canon(name).split() if p]
+    return parts[-1] if parts else ""
+
+def _clean_team(team: str | None) -> str:
+    if not team: return ""
+    t = _canon(team)
+    # remove common suffixes
+    t = re.sub(r"\b(fc|cf|u21|u23|b|ii|reserves)\b", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
 TEAM_ALIASES = {
-    "man utd":"manchester united",
-    "psg":"paris saint germain",
-    "inter":"internazionale",
-    # extend if your dataset team labels differ from FotMob
+    "man utd": "manchester united",
+    "psg": "paris saint germain",
+    "inter": "internazionale",
+    "sheff wed": "sheffield wednesday",
+    "luton": "luton town",
+    # add more if your CSV uses different short names
 }
+
+USER_AGENT = {"User-Agent": "Mozilla/5.0 (compatible; scouting-app/1.0)"}
+
+# If FotMob blocks hotlinking, serve via a caching image proxy (works well in Streamlit)
+def _fetchable_image_url(url: str) -> str:
+    # images.weserv.nl expects a host-only URL without schema
+    # e.g. https://images.weserv.nl/?url=images.fotmob.com/image_resources/playerimages/123.png
+    hostless = url.replace("https://", "").replace("http://", "")
+    return f"https://images.weserv.nl/?url={hostless}"
 
 @st.cache_data(show_spinner=False, ttl=60*60*24)
 def fotmob_image_url(player_name: str, team_name: str | None = None) -> str | None:
-    """Return a FotMob PNG headshot URL for a (player, team) if found; else None."""
+    """
+    Return a fetchable image URL for FotMob headshot.
+    Tries multiple queries and falls back to a proxy if direct image is blocked.
+    """
     try:
-        q = requests.utils.quote(str(player_name))
-        r = requests.get(f"https://www.fotmob.com/api/search?q={q}", timeout=6,
-                         headers={"User-Agent":"Mozilla/5.0"})
-        if r.status_code != 200:
-            return None
-        js = r.json()
-        cand = js.get("players") or []
-        if not cand:
-            return None
+        team_target = _clean_team(TEAM_ALIASES.get(_canon(team_name or ""), team_name or ""))
+        lname = _last_name(player_name)
+        queries = [
+            player_name,
+            lname if lname else player_name,
+            f"{player_name} {team_name or ''}".strip(),
+            f"{lname} {team_name or ''}".strip() if lname else "",
+        ]
+        queries = [q for q in queries if q]
 
-        team_target = _canon(TEAM_ALIASES.get(_canon(team_name or ""), team_name or ""))
+        best_pick = None
+        best_score = -1.0
 
-        pick = None
-        if team_target:
-            exact = [c for c in cand if _canon(c.get("team",{}).get("name","")) == team_target]
-            if exact:
-                pick = exact[0]
+        for q in queries:
+            r = requests.get(f"https://www.fotmob.com/api/search?q={quote(q)}",
+                             timeout=6, headers=USER_AGENT)
+            if r.status_code != 200:
+                continue
+            js = r.json()
+            cands = js.get("players") or []
+            if not cands:
+                continue
+
+            # choose by team similarity if team provided; otherwise first hit
+            if team_target:
+                for c in cands:
+                    team_name_c = c.get("team", {}).get("name", "")
+                    score = _similar(team_name_c, team_target)
+                    # small bump if the last name is in player name (handles initials like "C. Morris")
+                    if lname and lname in _canon(c.get("name","")):
+                        score += 0.15
+                    if score > best_score:
+                        best_score, best_pick = score, c
             else:
-                scored = sorted(
-                    (( _similar(c.get("team",{}).get("name",""), team_target), c) for c in cand),
-                    key=lambda x: x[0], reverse=True
-                )
-                if scored and scored[0][0] >= 0.6:
-                    pick = scored[0][1]
-        if pick is None:
-            pick = cand[0]
+                best_pick = cands[0]
+                break
 
-        pid = pick.get("id")
+            # good enough — stop early
+            if best_pick and best_score >= 0.6:
+                break
+
+        if not best_pick:
+            return None
+
+        pid = best_pick.get("id")
         if not pid:
             return None
-        url = f"https://images.fotmob.com/image_resources/playerimages/{pid}.png"
-        hr = requests.head(url, timeout=6, headers={"User-Agent":"Mozilla/5.0"})
-        return url if hr.status_code == 200 else None
+
+        direct = f"https://images.fotmob.com/image_resources/playerimages/{pid}.png"
+        # Try direct; if blocked use proxy (no HEAD because some CDNs 403 on HEAD)
+        test = requests.get(direct, timeout=6, headers=USER_AGENT)
+        if test.status_code == 200 and test.content and len(test.content) > 256:
+            return direct
+        return _fetchable_image_url(direct)
+
     except Exception:
         return None
 
-# Default fallback; you can upload your own below
+# Default fallback (you can still upload a custom one from the sidebar)
 DEFAULT_FALLBACK_IMG = "https://static.fotmob.com/players/_fallback.png"
+
 
 # ----------------- SIDEBAR FILTERS -----------------
 with st.sidebar:
