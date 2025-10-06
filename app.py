@@ -26,14 +26,17 @@ st.markdown(
     <style>
       :root { --bg: #0f1115; --card: #161a22; --muted: #a8b3cf; --soft: #202633; }
       .block-container { padding-top: 0.8rem; }
-      body { background-color: var(--bg); font-family: system-ui, -apple-system, "Segoe UI", "Segoe UI Emoji", Roboto, Helvetica, Arial, sans-serif; }
+      body {
+        background-color: var(--bg);
+        font-family: system-ui, -apple-system, "Segoe UI", "Segoe UI Emoji", Roboto, Helvetica, Arial, sans-serif;
+      }
       .wrap { display:flex; justify-content:center; }
       .player-card {
         width:min(420px, 96%);
         display:grid;
         grid-template-columns: 96px 1fr 48px; /* photo | content | rank */
         gap:12px;
-        align-items:center;
+        align-items:flex-start;            /* <— align everything to the top */
         background:var(--card);
         border:1px solid #252b3a;
         border-radius:18px;
@@ -43,18 +46,30 @@ st.markdown(
         width:96px; height:96px; border-radius:12px;
         background:#0b0d12 url('https://i.redd.it/43axcjdu59nd1.jpeg') center/cover no-repeat;
         border:1px solid #2a3145;
+        margin-top:2px;                    /* small nudge up */
       }
       .leftcol { display:flex; flex-direction:column; align-items:center; gap:8px; }
-      .meta3 { display:grid; grid-template-columns: repeat(3, auto); gap:8px; align-items:center; }
+      .meta3 {
+        display:grid;
+        grid-template-columns: repeat(3, max-content); /* fixed chip sizing across cards */
+        gap:8px; align-items:center;
+      }
       .name { font-weight:800; font-size:22px; color:#e8ecff; margin-bottom:6px; }
       .sub { color:#a8b3cf; font-size:15px; }
-      .pill { padding:2px 10px; border-radius:9px; font-weight:800; font-size:18px; color:#0b0d12; display:inline-block; min-width:42px; text-align:center; }
+      .pill {
+        padding:2px 10px; border-radius:9px; font-weight:800; font-size:18px;
+        color:#0b0d12; display:inline-block; min-width:42px; text-align:center;
+      }
       .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:4px 0; }
       .chip {
         background:var(--soft); color:#cbd5f5; border:1px solid #2d3550;
         padding:3px 10px; border-radius:10px; font-size:13px; line-height:18px;
+        min-width:52px; text-align:center; /* keeps the 3-meta row aligned */
       }
-      .pos { color:#eaf0ff; font-weight:700; padding:4px 10px; border-radius:10px; font-size:12px; border:1px solid rgba(255,255,255,0.08); }
+      .pos {
+        color:#eaf0ff; font-weight:700; padding:4px 10px; border-radius:10px;
+        font-size:12px; border:1px solid rgba(255,255,255,0.08);
+      }
       .teamline { color:#e6ebff; font-size:15px; font-weight:400; margin-top:2px; }
       .rank { color:#94a0c6; font-weight:800; font-size:18px; text-align:right; }
       .divider { height:12px; }
@@ -104,8 +119,8 @@ ROLES = {
     'Goal Threat CF': {
         'desc': "High shot & xG volume, box presence, consistent SoT and finishing.",
         'metrics': {
-            'Non-penalty goals per 90': 3, 'Shots per 90': 1.5, 'xG per 90': 3,
-            'Touches in box per 90': 1, 'Shots on target, %': 0.5
+            'Non-penalty goals per 90': 3,'Shots per 90': 1.5,'xG per 90': 3,
+            'Touches in box per 90': 1,'Shots on target, %': 0.5
         }
     },
     'Link-Up CF': {
@@ -120,10 +135,7 @@ ROLES = {
     },
     'Target Man CF': {
         'desc': "Aerial presence & duel dominance for a focal point game.",
-        'metrics': {
-            'Aerial duels won, %': 4,
-            'Aerial duels per 90': 3,
-        }
+        'metrics': { 'Aerial duels won, %': 4, 'Aerial duels per 90': 3 }
     },
     'All in': {
         'desc': "Blend of creation + scoring; balanced all-round attacking profile.",
@@ -200,7 +212,6 @@ with st.sidebar:
     default_sel = PRESETS[preset]
     leagues_sel = st.multiselect("Leagues", leagues_avail, default=default_sel)
 
-    # β applies to all scores
     beta = st.slider("League weighting beta (applies to all scores)", 0.0, 1.0, 0.40, 0.05)
 
     df["Minutes played"] = pd.to_numeric(df["Minutes played"], errors="coerce")
@@ -328,7 +339,7 @@ POS_COLORS = {
 def chip_color(pos_code: str) -> str:
     return POS_COLORS.get(pos_code.strip().upper(), "#2d3550")
 
-# Flags from Birth country → emoji (lightweight map)
+# --- Flags from Birth country → emoji ---
 COUNTRY_TO_CC = {
     # UK variants → GB flag
     "england":"GB","scotland":"GB","wales":"GB","northern ireland":"GB",
@@ -337,7 +348,7 @@ COUNTRY_TO_CC = {
     "ireland":"IE","republic of ireland":"IE","spain":"ES","france":"FR","germany":"DE","italy":"IT","portugal":"PT",
     "netherlands":"NL","belgium":"BE","austria":"AT","switzerland":"CH","denmark":"DK","sweden":"SE","norway":"NO",
     "croatia":"HR","serbia":"RS","bosnia and herzegovina":"BA","slovenia":"SI","slovakia":"SK","czech republic":"CZ","czechia":"CZ",
-    "poland":"PL","romania":"RO","bulgaria":"BG","greece":"GR","hungary":"HU","turkey":"TR","iceland":"IS","finland":"FI",
+    "poland":"PL","romania":"RO","bulgaria":"BG","greece":"GR","hungary":"HU","iceland":"IS","finland":"FI",
     "estonia":"EE","latvia":"LV","lithuania":"LT","moldova":"MD","armenia":"AM","azerbaijan":"AZ","georgia":"GE",
     "north macedonia":"MK","andorra":"AD","albania":"AL","malta":"MT","cyprus":"CY","luxembourg":"LU","monaco":"MC",
     "san marino":"SM","montenegro":"ME","kosovo":"XK","ukraine":"UA","russia":"RU","belarus":"BY",
@@ -353,15 +364,19 @@ COUNTRY_TO_CC = {
     "kazakhstan":"KZ","uzbekistan":"UZ","uae":"AE","united arab emirates":"AE"
 }
 def flag_emoji(country_name: str) -> str:
-    n = (country_name or "").strip().lower()
-    if not n:
+    """Return an emoji flag. Works for names AND two-letter alpha codes (e.g. 'GB', 'US')."""
+    if not country_name:
         return ""
-    # normalize accents/punctuation
-    n2 = unicodedata.normalize("NFKD", n).encode("ascii","ignore").decode("ascii")
-    cc = COUNTRY_TO_CC.get(n) or COUNTRY_TO_CC.get(n2)
-    if not cc or len(cc) != 2:
+    n = unicodedata.normalize("NFKD", str(country_name).strip().lower()).encode("ascii","ignore").decode("ascii")
+    cc = None
+    # map by name
+    cc = COUNTRY_TO_CC.get(n)
+    # if already alpha-2 like 'gb' / 'us', accept directly
+    if not cc and len(n) == 2 and n.isalpha():
+        cc = n.upper()
+    if not cc:
         return ""
-    base = 127397  # regional indicator symbol base
+    base = 127397
     return chr(base + ord(cc[0].upper())) + chr(base + ord(cc[1].upper()))
 
 # ----------------- RENDER -----------------
@@ -378,8 +393,7 @@ for idx, row in ranked.iterrows():
     lu_i = int(round(float(row["Score_LU"])))
     tm_i = int(round(float(row["Score_TM"])))
 
-    # Left meta
-    flag = flag_emoji(str(row.get("Birth country", "") or ""))
+    flag = flag_emoji(row.get("Birth country", ""))
 
     # Position chips: keep CF first if present
     raw_codes = re.split(r"[,/; ]+", pos_full.strip().upper())
@@ -389,18 +403,14 @@ for idx, row in ranked.iterrows():
     chips_html = ""
     shown = set()
     for c in codes:
-        if c in shown:
-            continue
+        if c in shown: continue
         shown.add(c)
         color = chip_color(c)
         chips_html += f"<span class='pos' style='background:{color}'>{html.escape(c)}</span> "
 
-    # pill colors
     gt_style = f"background:{rating_color(gt_i)};"
     lu_style = f"background:{rating_color(lu_i)};"
     tm_style = f"background:{rating_color(tm_i)};"
-
-    team_html = html.escape(team)
 
     st.markdown(f"""
     <div class='wrap'>
@@ -413,8 +423,10 @@ for idx, row in ranked.iterrows():
             <span class='chip'>{contract_year if contract_year>0 else '—'}</span>
           </div>
         </div>
+
         <div>
           <div class='name'>{html.escape(player)}</div>
+
           <div class='row' style='align-items:center;'>
             <span class='pill' style='{gt_style}'>{gt_i}</span>
             <span class='sub'>Goal Threat</span>
@@ -427,14 +439,17 @@ for idx, row in ranked.iterrows():
             <span class='pill' style='{tm_style}'>{tm_i}</span>
             <span class='sub'>Target Man CF</span>
           </div>
+
           <div class='row'>{chips_html}</div>
-          <div class='teamline'>{team_html}</div>
+          <div class='teamline'>{html.escape(team)}</div>
         </div>
+
         <div class='rank'>#{rank}</div>
       </div>
     </div>
     <div class='divider'></div>
     """, unsafe_allow_html=True)
+
 
 
 
