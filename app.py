@@ -30,9 +30,9 @@ st.markdown("""
   .avatar{ width:96px; height:96px; border-radius:12px; background:#0b0d12 url('https://i.redd.it/43axcjdu59nd1.jpeg') center/cover no-repeat; border:1px solid #2a3145; }
   .leftcol{ display:flex; flex-direction:column; align-items:center; gap:8px; }
   .meta3{ display:grid; grid-template-columns: repeat(3, auto); gap:8px; align-items:center; }
-  .name{ font-weight:800; font-size:22px; color:#e8ecff; margin-bottom:6px; }
+  .name{ font-weight:800; font-size:24px; color:#e8ecff; margin-bottom:6px; }
   .sub{ color:#a8b3cf; font-size:15px; }
-  .pill{ padding:2px 10px; border-radius:9px; font-weight:800; font-size:18px; color:#0b0d12; display:inline-block; min-width:42px; text-align:center; }
+  .pill{ padding:1.5px 7px; border-radius:9px; font-weight:800; font-size:15px; color:#0b0d12; display:inline-block; min-width:42px; text-align:center; }
   .row{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:4px 0; }
   .chip{ background:var(--soft); color:#cbd5f5; border:1px solid #2d3550; padding:3px 10px; border-radius:10px; font-size:13px; line-height:18px; }
   .flagchip{ display:inline-flex; align-items:center; gap:6px; background:var(--soft); color:#cbd5f5; border:1px solid #2d3550; padding:2px 8px; border-radius:10px; font-size:13px; line-height:18px; height:22px;}
