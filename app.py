@@ -261,7 +261,7 @@ df_f["Contract Year"] = pd.to_datetime(df_f["Contract expires"], errors="coerce"
 ranked = df_f.sort_values("Overall Rating", ascending=False).head(int(top_n)).copy().reset_index(drop=True)
 
 # ----------------- Image helper -----------------
-FALLBACK_URL = "https://preview.redd.it/is-it-only-me-that-is-against-signing-players-with-no-v0-43axcjdu59nd1.jpeg?auto=webp&s=a0cea2c5a1cb083911f3c776d096581974ab91ce"
+FALLBACK_URL = "https://i.redd.it/43axcjdu59nd1.jpeg"
 
 def guess_fotmob_url(team: str, player: str) -> str:
     def slug(x):
@@ -314,6 +314,8 @@ for idx, row in ranked.iterrows():
     potential_i = int(round(potential))
 
     img_url_try = guess_fotmob_url(team, surname)
+    if not img_url_try or img_url_try.strip() == "":
+        img_url_try = FALLBACK_URL
 
     ov_style = f"background:{rating_color(overall_i)};"
     po_style = f"background:{rating_color(potential_i)};"
