@@ -264,8 +264,8 @@ df_f["Combined Score"] = combined_role_score(df_f, COMBINED_METRICS)
 
 # ----------------- Overall & Potential -----------------
 def age_bonus(age: float) -> int:
-    # 27 +0 / 26 +1 / 25 +2 / 24 +2 / 23 +3 / 22 +3 / 21 +4 / 20 +5 / 19 +6 / 18 +7 / 17 +8 / 16 +9
-    table = {27:0, 26:1, 25:2, 24:2, 23:3, 22:3, 21:4, 20:5, 19:6, 18:7, 17:8, 16:9}
+    # 27 +0 / 26 +1 / 25 +3 / 24 +3 / 23 +4 / 22 +5 / 21 +6 / 20 +6 / 19 +7 / 18 +8 / 17 +9 / 16 +10
+    table = {27:0, 26:1, 25:3, 24:3, 23:4, 22:5, 21:6, 20:6, 19:7, 18:8, 17:9, 16:10}
     a = int(age) if not pd.isna(age) else 27
     if a >= 28: return 0
     if a < 16: return 9
@@ -279,69 +279,11 @@ df_f["Contract Year"] = pd.to_datetime(df_f["Contract expires"], errors="coerce"
 # ----------------- Top N -----------------
 ranked = df_f.sort_values("Overall Rating", ascending=False).head(int(top_n)).copy().reset_index(drop=True)
 
-# ----------------- IMAGE RESOLUTION HELPERS -----------------
+# ----------------- IMAGE RESOLUTION HELPERS (NO WIKIPEDIA) -----------------
 def _norm(s: str) -> str:
     s = (s or "").strip()
     s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
     return s.lower()
-
-@st.cache_data(show_spinner=False, ttl=60*60*24)
-def wiki_search(query: str) -> dict | None:
-    """Return dict with 'thumb' if any Wikipedia result (biased to football) has a thumbnail."""
-    if not query:
-        return None
-
-    def _try(q: str):
-        try:
-            r = requests.get(
-                "https://en.wikipedia.org/w/api.php",
-                params={"action":"query","format":"json","list":"search","srsearch":q,"srlimit":6},
-                timeout=6, headers=UA,
-            )
-            if not r.ok: return None
-            hits = (r.json().get("query",{}) or {}).get("search",[]) or []
-            if not hits: return None
-            pageids = [h.get("pageid") for h in hits if h.get("pageid")]
-            r2 = requests.get(
-                "https://en.wikipedia.org/w/api.php",
-                params={"action":"query","format":"json","pageids":"|".join(map(str,pageids)),
-                        "prop":"pageimages|categories","pithumbsize":256},
-                timeout=6, headers=UA,
-            )
-            if not r2.ok: return None
-            pages = (r2.json().get("query",{}) or {}).get("pages",{}) or {}
-            best, best_score = None, -1
-            for _, page in pages.items():
-                thumb = (page.get("thumbnail") or {}).get("source")
-                if not thumb: continue
-                cats = " ".join(c.get("title","") for c in page.get("categories",[]) if isinstance(c,dict)).lower()
-                score = 0
-                if any(k in cats for k in ["football","footballer","association football"]): score += 3
-                title = (page.get("title") or "").lower()
-                score += int(any(tok in title for tok in _norm(query).split()))
-                if score > best_score:
-                    best_score, best = score, {"title": page.get("title"), "thumb": thumb}
-            return best
-        except Exception:
-            return None
-
-    surname = query.split()[0]
-    variants = [f"{query} footballer", query, f"{surname} footballer"]
-    for v in variants:
-        hit = _try(v)
-        if hit and hit.get("thumb"):
-            return hit
-    return None
-
-def resolve_wiki_thumb(player_name: str, team_name: str | None = None) -> str | None:
-    if not player_name: return None
-    pn = player_name.replace("."," ").strip()
-    surname = pn.split()[-1] if pn else ""
-    tn = (team_name or "").strip()
-    for q in [f"{surname} {tn}".strip(), f"{pn} {tn}".strip(), surname, pn]:
-        hit = wiki_search(q)
-        if hit and hit.get("thumb"): return hit["thumb"]
-    return None
 
 @st.cache_data(show_spinner=False, ttl=60*60*24)
 def sofifa_headshot(player_name: str, team_name: str | None = None) -> str | None:
@@ -349,22 +291,23 @@ def sofifa_headshot(player_name: str, team_name: str | None = None) -> str | Non
     try:
         q = f"{player_name} {team_name or ''}".strip()
         r = requests.get("https://sofifa.com/search", params={"keyword": q}, headers=UA, timeout=7)
-        if not r.ok: return None
+        if not r.ok:
+            return None
         soup = BeautifulSoup(r.text, "html.parser")
         a = soup.select_one("a[href^='/player/']")
-        if not a: return None
-        href = a.get("href","")
-        m = re.search(r"/player/(\\d+)", href)
-        if not m: return None
+        if not a:
+            return None
+        href = a.get("href", "")
+        m = re.search(r"/player/(\d+)", href)
+        if not m:
+            return None
         pid = int(m.group(1))
-        # Sofifa CDN path is /players/AAA/BBB/VV_120.png where id split into 3+3 and VV=game version
-        a3 = f"{pid//1000:03d}"
-        b3 = f"{pid%1000:03d}"
-        # try recent versions from new to old
-        for ver in ("25","24","23","22","21"):
-            url = f"https://cdn.sofifa.net/players/{a3}/{b3}/{ver}_120.png"
-            # don't fetch content; let browser load. Just return URL.
-            return url
+        # Sofifa CDN path is /players/AAA/BBB/VV_120.png (id split into 3+3; VV = game version)
+        a3 = f"{pid // 1000:03d}"
+        b3 = f"{pid % 1000:03d}"
+        # Try recent versions; browser will fetch the one we return
+        for ver in ("25", "24", "23", "22", "21"):
+            return f"https://cdn.sofifa.net/players/{a3}/{b3}/{ver}_120.png"
     except Exception:
         return None
     return None
@@ -375,16 +318,17 @@ def fifacm_headshot(player_name: str, team_name: str | None = None) -> str | Non
     try:
         q = f"{player_name} {team_name or ''}".strip()
         r = requests.get("https://www.fifacm.com/players", params={"name": q}, headers=UA, timeout=7)
-        if not r.ok: return None
+        if not r.ok:
+            return None
         soup = BeautifulSoup(r.text, "html.parser")
-        # player link has /player/{eaid}
         a = soup.select_one("a[href^='/player/']")
-        if not a: return None
-        href = a.get("href","")
-        m = re.search(r"/player/(\\d+)", href)
-        if not m: return None
+        if not a:
+            return None
+        href = a.get("href", "")
+        m = re.search(r"/player/(\d+)", href)
+        if not m:
+            return None
         eaid = m.group(1)
-        # common face path
         return f"https://cdn.fifacm.com/players/{eaid}.png"
     except Exception:
         return None
@@ -393,22 +337,28 @@ def fifacm_headshot(player_name: str, team_name: str | None = None) -> str | Non
 def fotmob_search(query: str) -> dict | None:
     try:
         r = requests.get("https://www.fotmob.com/api/search", params={"q": query}, headers=UA, timeout=6)
-        if r.ok: return r.json()
+        if r.ok:
+            return r.json()
     except Exception:
         return None
     return None
 
 def _score_match(player_q: str, team_q: str | None, name: str, team: str) -> int:
     score = 0
-    if player_q and (player_q in name or name in player_q): score += 4
+    if player_q and (player_q in name or name in player_q):
+        score += 4
     pq_last = player_q.split()[-1] if player_q else ""
-    if pq_last and pq_last in name: score += 2
-    if team_q and team_q in team:  score += 3
+    if pq_last and pq_last in name:
+        score += 2
+    if team_q and team_q in team:
+        score += 3
     return score
 
 @st.cache_data(show_spinner=False, ttl=60*60*24)
 def fotmob_headshot(player_name: str, team_name: str | None = None) -> str | None:
-    if not player_name: return None
+    """Resolve FotMob ID via search (surname+team first) and return headshot URL."""
+    if not player_name:
+        return None
     pn_raw = player_name.replace(".", " ").strip()
     tn_raw = (team_name or "").strip()
     surname = pn_raw.split()[-1] if pn_raw else ""
@@ -418,38 +368,35 @@ def fotmob_headshot(player_name: str, team_name: str | None = None) -> str | Non
     best, best_score = None, -1
     for q in queries:
         data = fotmob_search(q)
-        if not data: continue
+        if not data:
+            continue
         for p in data.get("players", []):
-            name = _norm(p.get("name",""))
-            team = _norm(p.get("teamName",""))
+            name = _norm(p.get("name", ""))
+            team = _norm(p.get("teamName", ""))
             pid = p.get("id")
             s = _score_match(player_q, team_q, name, team)
             if s > best_score:
                 best_score, best = s, pid
         if best is not None and best_score >= 5:
             break
-    if best is None: return None
+    if best is None:
+        return None
     return f"https://images.fotmob.com/image_resources/playerimages/{best}.png"
 
 def resolve_player_image_url(player_name: str, team_name: str | None) -> str:
     """
-    Best-effort headshot resolver:
-    Wikipedia → Sofifa → FIFACM → FotMob → fallback.
-    Returns a URL (we still keep CSS-level fallback as secondary).
+    Try Sofifa → FIFACM → FotMob → fallback.
+    Returns a URL (CSS multi-background still provides the hard fallback).
     """
-    # 1) Wikipedia/Wikidata
-    w = resolve_wiki_thumb(player_name, team_name)
-    if w: return w
-    # 2) Sofifa
     s = sofifa_headshot(player_name, team_name)
-    if s: return s
-    # 3) FIFACM
+    if s:
+        return s
     fcm = fifacm_headshot(player_name, team_name)
-    if fcm: return fcm
-    # 4) FotMob
+    if fcm:
+        return fcm
     fm = fotmob_headshot(player_name, team_name)
-    if fm: return fm
-    # 5) fallback
+    if fm:
+        return fm
     return FALLBACK_URL
 
 # ----------------- SoFIFA-style colors -----------------
