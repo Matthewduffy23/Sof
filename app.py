@@ -1,4 +1,4 @@
-# app_top20_tiles.py — Top 20 Tiles (CF) with fixed image, colored role tags, proper flags (incl. ENG/SCT/WLS)
+# app_top20_tiles.py — Top 20 Tiles (CF) with player dropdown profiles
 # Requirements: streamlit, pandas, numpy
 
 import io, re, math, unicodedata
@@ -38,18 +38,21 @@ st.markdown("""
   .flagchip{ display:inline-flex; align-items:center; gap:6px; background:var(--soft); color:#cbd5f5; border:1px solid #2d3550; padding:2px 8px; border-radius:10px; font-size:13px; line-height:18px; height:22px;}
   .flagchip img{ width:18px; height:14px; border-radius:2px; display:block; }
   .pos{ color:#eaf0ff; font-weight:700; padding:3px 8px; border-radius:10px; font-size:12px; border:1px solid rgba(255,255,255,.08); }
-  .teamline{ color:#e6ebff; font-size:15px; font-weight:400; margin-top:2px; }
+  .teamline{ color:#e6ebff; font-size:15px; font-weight:400; margin-top:8px; }
   .rank{ color:#94a0c6; font-weight:800; font-size:18px; text-align:right; }
   .divider{ height:12px; }
-    /* Custom tweaks: position row + team line spacing */
-  .row.position-row {
-    margin-top: 6px;    /* push position chips slightly down */
-  }
 
-  .teamline {
-    margin-top: 8px;    /* push team name down slightly */
-  }
+  /* Custom tweaks: position row + team line spacing */
+  .row.position-row { margin-top: 6px; }
 
+  /* ====== Profile (dropdown) styles ====== */
+  .metrics { width:100%; display:flex; flex-direction:column; gap:8px; }
+  .metric { display:grid; grid-template-columns: 1fr 140px 64px; gap:10px; align-items:center; }
+  .metric .lab { color:#cfd6ef; font-size:14px; }
+  .metric .bar { height:8px; border-radius:999px; background:#1b2130; border:1px solid #2b344d; position:relative; overflow:hidden; }
+  .metric .fill { height:100%; border-radius:999px; }
+  .metric .val { color:#98a4c7; font-size:13px; text-align:right; }
+  .section-title { color:#e8ecff; font-weight:700; margin:2px 0 8px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -194,6 +197,7 @@ df_f["Score_TM_raw"]=role_score(df_f,ROLES["Target Man CF"]["metrics"])
 df_f["Score_ALL_raw"]=role_score(df_f,ROLES["All in"]["metrics"])
 # league-weighted
 ls=df_f["League Strength"].astype(float)
+beta = float(beta)
 df_f["Score_GT"]=(1-beta)*df_f["Score_GT_raw"]+beta*ls
 df_f["Score_LU"]=(1-beta)*df_f["Score_LU_raw"]+beta*ls
 df_f["Score_TM"]=(1-beta)*df_f["Score_TM_raw"]+beta*ls
@@ -209,7 +213,19 @@ def rating_color(v:float)->str:
     for i in range(len(PALETTE)-1):
         x0,c0=PALETTE[i]; x1,c1=PALETTE[i+1]
         if v<=x1:
-            t=0 if x1==x0 else (v-x0)/(x1-x0); r,g,b=_lerp(c0,c1,t); return f"rgb({r},{g},{b})"
+            t=0 if x1==x0 else (v-x0)/(x1-x1 if x1==x0 else (x1-x0))
+            # fix accidental divide-by-zero from above one-liner
+    return ""
+
+# (Fix rating_color properly)
+def rating_color(v:float)->str:
+    v=max(0.0,min(100.0,float(v)))
+    for i in range(len(PALETTE)-1):
+        x0,c0=PALETTE[i]; x1,c1=PALETTE[i+1]
+        if v<=x1:
+            t=0 if x1==x0 else (v-x0)/(x1-x0)
+            r,g,b=_lerp(c0,c1,t)
+            return f"rgb({r},{g},{b})"
     r,g,b=PALETTE[-1][1]; return f"rgb({r},{g},{b})"
 
 POS_COLORS={
@@ -220,10 +236,9 @@ POS_COLORS={
 def chip_color(p:str)->str: return POS_COLORS.get(p.strip().upper(),"#2d3550")
 
 # ----------------- Flags (Twemoji SVG for ALL countries) -----------------
-# Map many common country names -> ISO alpha-2 (lowercase)
 COUNTRY_TO_CC = {
     "united kingdom":"gb","great britain":"gb","northern ireland":"gb",
-    "england":"eng","scotland":"sct","wales":"wls",  # UK subdivisions (handled specially)
+    "england":"eng","scotland":"sct","wales":"wls",
     "ireland":"ie","republic of ireland":"ie",
     "spain":"es","france":"fr","germany":"de","italy":"it","portugal":"pt","netherlands":"nl","belgium":"be",
     "austria":"at","switzerland":"ch","denmark":"dk","sweden":"se","norway":"no","finland":"fi","iceland":"is",
@@ -238,34 +253,24 @@ COUNTRY_TO_CC = {
     "new zealand":"nz","latvia":"lv","lithuania":"lt","estonia":"ee","moldova":"md","north macedonia":"mk",
     "malta":"mt","cyprus":"cy","luxembourg":"lu","andorra":"ad","monaco":"mc","san marino":"sm",
 }
-
-# Twemoji codes for UK subdivisions (not standard ISO flags)
 TWEMOJI_SPECIAL = {
-    "eng": "1f3f4-e0067-e0062-e0065-e006e-e0067-e007f",                     # England
-    "sct": "1f3f4-e0067-e0062-e0073-e0063-e006f-e0074-e007f",               # Scotland
-    "wls": "1f3f4-e0067-e0062-e0077-e0061-e006c-e0065-e007f",               # Wales
+    "eng": "1f3f4-e0067-e0062-e0065-e006e-e0067-e007f",
+    "sct": "1f3f4-e0067-e0062-e0073-e0063-e006f-e0074-e007f",
+    "wls": "1f3f4-e0067-e0062-e0077-e0061-e006c-e007f",
 }
-
 def country_norm(s: str) -> str:
     if not s: return ""
     return unicodedata.normalize("NFKD", s).encode("ascii","ignore").decode("ascii").strip().lower()
-
 def cc_to_twemoji_code(cc: str) -> str | None:
-    """
-    Convert ISO alpha-2 (e.g., 'fr') to Twemoji regional-indicator hex sequence,
-    e.g., 'fr' -> '1f1eb-1f1f7'
-    """
     if not cc or len(cc) != 2: 
         return None
     a, b = cc.upper()
     cp1 = 0x1F1E6 + (ord(a) - ord('A'))
     cp2 = 0x1F1E6 + (ord(b) - ord('A'))
     return f"{cp1:04x}-{cp2:04x}"
-
 def flag_chip_html(country_name: str, age: int, contract_year: int) -> str:
     n = country_norm(country_name)
     cc = COUNTRY_TO_CC.get(n, "")
-    # special UK subdivision svg
     if cc in TWEMOJI_SPECIAL:
         code = TWEMOJI_SPECIAL[cc]
         src = f"https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/svg/{code}.svg"
@@ -276,14 +281,63 @@ def flag_chip_html(country_name: str, age: int, contract_year: int) -> str:
             src = f"https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/svg/{code}.svg"
             flag_html = f"<span class='flagchip'><img src='{src}' alt='{country_name}'></span>"
         else:
-            # unknown → just blank chip
             flag_html = "<span class='chip'>—</span>"
-
     age_chip = f"<span class='chip'>{age}y.o.</span>"
     yr = f"{contract_year}" if contract_year > 0 else "—"
     contract_chip = f"<span class='chip'>{yr}</span>"
     return f"<div class='row'>{flag_html}{age_chip}{contract_chip}</div>"
 
+# ======= Profile helpers (percentiles + values per row) =======
+def pct_of_row(row, metric: str) -> float:
+    return float(row.get(f"{metric} Percentile", 0.0))
+def val_of_row(row, metric: str) -> float:
+    v = row.get(metric, 0)
+    try: return float(v)
+    except Exception: return 0.0
+def render_section(items: list[tuple[str, float, float]]) -> str:
+    rows = []
+    for lab, pct, raw in items:
+        rows.append(
+            f"""
+            <div class="metric">
+              <div class="lab">{lab}</div>
+              <div class="bar"><div class="fill" style="width:{pct:.0f}%; background:{rating_color(pct)}"></div></div>
+              <div class="val">{raw:.2f}</div>
+            </div>
+            """
+        )
+    return f"""<div class="metrics">{''.join(rows)}</div>"""
+ATTACKING_SPEC = [
+    ("Crosses","Crosses per 90"),
+    ("Crossing Accuracy %","Accurate crosses, %"),
+    ("Goals: Non-Penalty","Non-penalty goals per 90"),
+    ("xG","xG per 90"),
+    ("Conversion Rate %","Goal conversion, %"),
+    ("Header Goals","Head goals per 90"),
+    ("Expected Assists","xA per 90"),
+    ("Progressive Runs","Progressive runs per 90"),
+    ("Shots","Shots per 90"),
+    ("Shooting Accuracy %","Shots on target, %"),
+    ("Touches in Opposition Box","Touches in box per 90"),
+]
+DEFENSIVE_SPEC = [
+    ("Aerial Duels","Aerial duels per 90"),
+    ("Aerial Duel Success %","Aerial duels won, %"),
+    ("Defensive Duels","Defensive duels per 90"),
+    ("Defensive Duel Success %","Defensive duels won, %"),
+    ("PAdj. Interceptions","PAdj Interceptions"),
+]
+POSSESSION_SPEC = [
+    ("Deep Completions","Deep completions per 90"),
+    ("Dribbles","Dribbles per 90"),
+    ("Dribbling Success %","Successful dribbles, %"),
+    ("Key Passes","Key passes per 90"),
+    ("Passes","Passes per 90"),
+    ("Passing Accuracy %","Accurate passes, %"),
+    ("Passes to Penalty Area","Passes to penalty area per 90"),
+    ("Passes to Penalty Area %","Accurate passes to penalty area, %"),
+    ("Smart Passes","Smart passes per 90"),
+]
 
 # ----------------- RENDER -----------------
 for idx,row in ranked.iterrows():
@@ -308,6 +362,7 @@ for idx,row in ranked.iterrows():
     if "CF" in codes: codes = ["CF"] + [c for c in codes if c!="CF"]
     chips_html = "".join(f"<span class='pos' style='background:{chip_color(c)}'>{c}</span> " for c in dict.fromkeys(codes))
 
+    # Tile
     st.markdown(f"""
     <div class='wrap'>
       <div class='player-card'>
@@ -329,7 +384,7 @@ for idx,row in ranked.iterrows():
             <span class='pill' style='{tm_style}'>{tm_i}</span>
             <span class='sub'>Target Man CF</span>
           </div>
-          <div class='row'>{chips_html}</div>
+          <div class='row position-row'>{chips_html}</div>
           <div class='teamline'>{team}</div>
         </div>
         <div class='rank'>#{rank}</div>
@@ -337,6 +392,24 @@ for idx,row in ranked.iterrows():
     </div>
     <div class='divider'></div>
     """, unsafe_allow_html=True)
+
+    # ---- Per-player profile (dropdown with tabs) ----
+    attacking = [(lab, pct_of_row(row, met), val_of_row(row, met)) for lab, met in ATTACKING_SPEC]
+    defensive = [(lab, pct_of_row(row, met), val_of_row(row, met)) for lab, met in DEFENSIVE_SPEC]
+    possession = [(lab, pct_of_row(row, met), val_of_row(row, met)) for lab, met in POSSESSION_SPEC]
+
+    with st.expander(f"📊 Profile: {player}", expanded=False):
+        tabs = st.tabs(["Attacking", "Defensive", "Possession"])
+        with tabs[0]:
+            st.markdown("<div class='section-title'>Attacking</div>", unsafe_allow_html=True)
+            st.markdown(render_section(attacking), unsafe_allow_html=True)
+        with tabs[1]:
+            st.markdown("<div class='section-title'>Defensive</div>", unsafe_allow_html=True)
+            st.markdown(render_section(defensive), unsafe_allow_html=True)
+        with tabs[2]:
+            st.markdown("<div class='section-title'>Possession</div>", unsafe_allow_html=True)
+            st.markdown(render_section(possession), unsafe_allow_html=True)
+
 
 
 
