@@ -1,4 +1,4 @@
-# app_top20_tiles.py — Top 20 Tiles (CF) with FIFA-style profile rows (no right pill)
+# app_top20_tiles.py — Top 20 Tiles (CF) + FIFA-style profile rows
 # Requirements: streamlit, pandas, numpy
 
 import io, re, math, unicodedata
@@ -42,24 +42,24 @@ st.markdown("""
   .divider{ height:12px; }
 
   /* ====== Profile (dropdown) — FIFA-style rows ====== */
-  .metrics { width:100%; display:flex; flex-direction:column; gap:12px; padding:10px 6px 4px 6px; }
+  .metrics-card { background:#141821; border:1px solid #252b3a; border-radius:14px; padding:14px; }
+  .section-h { color:#e8ecff; font-weight:800; font-size:18px; margin:8px 0 12px; }
+  .metrics { width:100%; display:flex; flex-direction:column; gap:12px; }
   .metric-fifa { display:grid; grid-template-columns: 56px 1fr 240px; gap:12px; align-items:center; }
-  .metric-fifa .lab { color:#d4dcff; font-size:18px; letter-spacing:.2px; }
-  /* dashed lane behind */
+  .metric-fifa .lab { color:#d4dcff; font-size:18px; letter-spacing:.2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+  /* dashed lane & fill */
   .dashbar { position:relative; height:10px; border-radius:8px; background:
       repeating-linear-gradient(to right, #2e3447 0 14px, transparent 14px 22px);
       border:1px solid #2b344d; overflow:hidden; }
-  /* green dashed fill overlaid up to width% */
-  .dashfill { position:absolute; left:0; top:0; height:100%; background:
-      repeating-linear-gradient(to right, #3bc16a 0 14px, transparent 14px 22px); }
-  /* caret marker */
+  .dashfill { position:absolute; left:0; top:0; height:100%;
+      background: repeating-linear-gradient(to right, #6dde8f 0 14px, transparent 14px 22px); }
   .caret { position:absolute; top:-7px; width:0; height:0; border-left:6px solid transparent;
            border-right:6px solid transparent; border-bottom:10px solid #7BFF7B; transform:translateX(-50%); }
 
   /* Left pill in the profile rows */
-  .leftpill { padding:2px 8px; border-radius:8px; font-weight:900; font-size:18px; color:#0b0d12; text-align:center; }
+  .leftpill { padding:2px 8px; border-radius:8px; font-weight:900; font-size:18px; color:#0b0d12; text-align:center; min-width:48px; }
 
-  /* Streamlit expander & tabs tone-up on dark */
   .streamlit-expanderHeader { font-weight:700; color:#e8ecff; }
   .stTabs [data-baseweb="tab"] { color:#a8b3cf; }
   .stTabs [aria-selected="true"] { color:#e8ecff !important; }
@@ -82,12 +82,15 @@ INCLUDED_LEAGUES = [
     'USA 2.','Uruguay 1.','Uzbekistan 1.','Venezuela 1.','Wales 1.'
 ]
 
+# These are the features needed for scoring + many common metrics in the CSV
 FEATURES = [
     'Defensive duels per 90','Defensive duels won, %','Aerial duels per 90','Aerial duels won, %','PAdj Interceptions',
     'Non-penalty goals per 90','xG per 90','Shots per 90','Shots on target, %','Goal conversion, %','Crosses per 90',
     'Accurate crosses, %','Dribbles per 90','Successful dribbles, %','Head goals per 90','Key passes per 90',
     'Touches in box per 90','Progressive runs per 90','Accelerations per 90','Passes per 90','Accurate passes, %',
     'xA per 90','Passes to penalty area per 90','Accurate passes to penalty area, %','Deep completions per 90','Smart passes per 90',
+    # The two below are optional—if present in your CSV, we'll use them
+    'Offensive duels per 90','Offensive duels won, %'
 ]
 ROLES = {
     'Goal Threat CF': {'metrics':{'Non-penalty goals per 90':3,'Shots per 90':1.5,'xG per 90':3,'Touches in box per 90':1,'Shots on target, %':0.5}},
@@ -172,8 +175,6 @@ with st.sidebar:
 # ----------------- VALIDATION -----------------
 missing=[c for c in REQUIRED_BASE if c not in df.columns]
 if missing: st.error(f"Dataset missing required base columns: {missing}"); st.stop()
-missing_feats=[c for c in FEATURES if c not in df.columns]
-if missing_feats: st.error(f"Dataset missing required feature columns: {missing_feats}"); st.stop()
 
 # ----------------- FILTER POOL -----------------
 df_f=df[df["League"].isin(leagues_sel)].copy()
@@ -181,15 +182,20 @@ df_f=df_f[df_f["Position"].astype(str).str.upper().str.startswith("CF")]
 df_f=df_f[df_f["Minutes played"].between(min_minutes,max_minutes)]
 df_f=df_f[df_f["Age"].between(min_age,max_age)]
 if apply_contract: df_f=df_f[df_f["Contract expires"].dt.year<=cutoff_year]
-for c in FEATURES: df_f[c]=pd.to_numeric(df_f[c],errors="coerce")
-df_f=df_f.dropna(subset=FEATURES)
+# ensure numeric for *every* metric we might use if present
+for c in FEATURES:
+    if c in df_f.columns:
+        df_f[c]=pd.to_numeric(df_f[c],errors="coerce")
+df_f=df_f.dropna(subset=[c for c in FEATURES if c in df_f.columns], how="all")
 df_f["League Strength"]=df_f["League"].map(LEAGUE_STRENGTHS).fillna(50.0)
 df_f=df_f[(df_f["League Strength"]>=float(min_strength))&(df_f["League Strength"]<=float(max_strength))]
 df_f=df_f[(df_f["Market value"]>=min_value)&(df_f["Market value"]<=max_value)]
 if df_f.empty: st.warning("No players after filters. Loosen filters."); st.stop()
 
 # ----------------- Percentiles -----------------
-for feat in FEATURES:
+# Compute league percentiles for any metric that exists in the df
+metrics_present = [m for m in FEATURES if m in df_f.columns]
+for feat in metrics_present:
     df_f[f"{feat} Percentile"]=df_f.groupby("League")[feat].transform(lambda x: x.rank(pct=True)*100.0)
 
 def role_score(df_in:pd.DataFrame,metrics:dict)->pd.Series:
@@ -197,7 +203,8 @@ def role_score(df_in:pd.DataFrame,metrics:dict)->pd.Series:
     wsum=np.zeros(len(df_in))
     for m,w in metrics.items():
         col=f"{m} Percentile"
-        if col in df_in.columns: wsum+=df_in[col].values*w
+        if col in df_in.columns:
+            wsum+=df_in[col].fillna(0).values*w
     return wsum/total_w
 
 # raw scores
@@ -284,9 +291,20 @@ def flag_chip_html(country_name: str, age: int, contract_year: int) -> str:
     contract_chip = f"<span class='chip'>{yr}</span>"
     return f"<div class='row'>{flag_html}{age_chip}{contract_chip}</div>"
 
-# ======= Profile helpers (percentiles per row) =======
-def pct_of_row(row, metric: str) -> float:
-    return float(row.get(f"{metric} Percentile", 0.0))
+# ======= Profile helpers =======
+def pct_of_row(row: pd.Series, metric: str) -> float:
+    """Return 0..100 percentile for metric; safe even if column/percentile missing."""
+    col = f"{metric} Percentile"
+    if col in row and pd.notna(row[col]):
+        return float(row[col])
+    if metric in df_f.columns:
+        # compute on the fly within this league
+        league = row["League"]
+        series = df_f.loc[df_f["League"]==league, metric]
+        if series.notna().any() and pd.notna(row.get(metric, np.nan)):
+            ranks = series.rank(pct=True)*100.0
+            return float(ranks.get(row.name, 0.0))
+    return 0.0
 
 def make_row(label: str, pct: float) -> str:
     pct = max(0.0, min(100.0, float(pct)))
@@ -302,34 +320,51 @@ def make_row(label: str, pct: float) -> str:
       </div>
     """
 
-def render_section(labels_and_metrics, row) -> str:
+def render_section(items, row) -> str:
     rows = []
-    for lab, met in labels_and_metrics:
-        rows.append(make_row(lab, pct_of_row(row, met)))
+    for lab, met in items:
+        if (met in df_f.columns) or (f"{met} Percentile" in df_f.columns):
+            rows.append(make_row(lab, pct_of_row(row, met)))
+    if not rows:
+        return "<div class='metrics'>No metrics available.</div>"
     return f"<div class='metrics'>{''.join(rows)}</div>"
 
+# === sections (unchanged; titles & metrics exactly as requested) ===
 ATTACKING_SPEC = [
-    ("Crossing","Crosses per 90"),
-    ("Finishing","Goal conversion, %"),
-    ("Heading accuracy","Aerial duels won, %"),
-    ("Short passing","Accurate passes, %"),
-    ("Volleys","Shots on target, %"),
+    ("Crosses","Crosses per 90"),
+    ("Crossing Accuracy %","Accurate crosses, %"),
+    ("Goals: Non-Penalty","Non-penalty goals per 90"),
     ("xG","xG per 90"),
-    ("Non-penalty goals","Non-penalty goals per 90"),
+    ("Conversion Rate %","Goal conversion, %"),
+    ("Header Goals","Head goals per 90"),
+    ("Expected Assists","xA per 90"),
+    ("Offensive Duels","Offensive duels per 90"),
+    ("Offensive Duel Success %","Offensive duels won, %"),
+    ("Progressive Runs","Progressive runs per 90"),
     ("Shots","Shots per 90"),
-    ("Touches in box","Touches in box per 90"),
+    ("Shooting Accuracy %","Shots on target, %"),
+    ("Touches in Opposition Box","Touches in box per 90"),
 ]
-SKILL_SPEC = [
-    ("Dribbling","Successful dribbles, %"),
-    ("Curve","Accurate crosses, %"),
-    ("FK Accuracy","Accurate crosses, %"),
-    ("Long passing","Passes to penalty area per 90"),
-    ("Ball control","Deep completions per 90"),
+DEFENSIVE_SPEC = [
+    ("Aerial Duels","Aerial duels per 90"),
+    ("Aerial Duel Success %","Aerial duels won, %"),
+    ("Defensive Duels","Defensive duels per 90"),
+    ("Defensive Duel Success %","Defensive duels won, %"),
+    ("PAdj. Interceptions","PAdj Interceptions"),
+]
+POSSESSION_SPEC = [
+    ("Deep Completions","Deep completions per 90"),
+    ("Dribbles","Dribbles per 90"),
+    ("Dribbling Success %","Successful dribbles, %"),
+    ("Key Passes","Key passes per 90"),
+    ("Passes","Passes per 90"),
+    ("Passing Accuracy %","Accurate passes, %"),
+    ("Passes to Penalty Area","Passes to penalty area per 90"),
+    ("Passes to Penalty Area %","Accurate passes to penalty area, %"),
+    ("Smart Passes","Smart passes per 90"),
 ]
 
 # ----------------- RENDER -----------------
-ranked=df_f.sort_values("Score_ALL",ascending=False).head(int(top_n)).copy().reset_index(drop=True)
-
 for idx,row in ranked.iterrows():
     rank = idx+1
     player = str(row.get("Player","")) or ""
@@ -352,7 +387,6 @@ for idx,row in ranked.iterrows():
     if "CF" in codes: codes = ["CF"] + [c for c in codes if c!="CF"]
     chips_html = "".join(f"<span class='pos' style='background:{chip_color(c)}'>{c}</span> " for c in dict.fromkeys(codes))
 
-    # Tile
     st.markdown(f"""
     <div class='wrap'>
       <div class='player-card'>
@@ -383,16 +417,19 @@ for idx,row in ranked.iterrows():
     <div class='divider'></div>
     """, unsafe_allow_html=True)
 
-    # ---- Per-player profile (dropdown) FIFA-style ----
+    # ---- Profile (dropdown) ----
     with st.expander(f"📊 Profile: {player}", expanded=False):
-        tabs = st.tabs(["Attacking", "Skill"])
+        tabs = st.tabs(["Attacking", "Defensive", "Possession"])
         with tabs[0]:
-            st.markdown("<div class='metrics'></div>", unsafe_allow_html=True)
-            html = render_section(ATTACKING_SPEC, row)
+            html = f"<div class='metrics-card'><div class='section-h'>ATTACKING</div>{render_section(ATTACKING_SPEC, row)}</div>"
             st.markdown(html, unsafe_allow_html=True)
         with tabs[1]:
-            html = render_section(SKill_SPEC := SKILL_SPEC, row)
+            html = f"<div class='metrics-card'><div class='section-h'>DEFENSIVE</div>{render_section(DEFENSIVE_SPEC, row)}</div>"
             st.markdown(html, unsafe_allow_html=True)
+        with tabs[2]:
+            html = f"<div class='metrics-card'><div class='section-h'>POSSESSION</div>{render_section(POSSESSION_SPEC, row)}</div>"
+            st.markdown(html, unsafe_allow_html=True)
+
 
 
 
