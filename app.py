@@ -760,76 +760,59 @@ for idx,row in ranked.iterrows():
     <div class='divider'></div>
     """, unsafe_allow_html=True)
 
-    # === dropdown with individual metrics ===
-    with st.expander("▼ Show individual metrics"):
-        ATTACKING = []
-        for lab, met in [
-            ("Crosses","Crosses per 90"),
-            ("Crossing Accuracy %","Accurate crosses, %"),
-            ("Goals: Non-Penalty","Non-penalty goals per 90"),
-            ("xG","xG per 90"),
-            ("Conversion Rate %","Goal conversion, %"),
-            ("Header Goals","Head goals per 90"),
-            ("Expected Assists","xA per 90"),
-            ("Offensive Duels","Offensive duels per 90"),
-            ("Offensive Duel Success %","Offensive duels won, %"),
-            ("Progressive Runs","Progressive runs per 90"),
-            ("Shots","Shots per 90"),
-            ("Shooting Accuracy %","Shots on target, %"),
-            ("Touches in Opposition Box","Touches in box per 90"),
-        ]:
-            ATTACKING.append((lab, float(np.nan_to_num(pct_of_row(row, met), nan=0.0))))
+# === dropdown with individual metrics ===
+with st.expander("▼ Show individual metrics"):
+    ATTACKING = []
+    for lab, met in [
+        ("Crosses", "Crosses per 90"),
+        ("Crossing Accuracy %", "Accurate crosses, %"),
+        ("Goals: Non-Penalty", "Non-penalty goals per 90"),
+        ("xG", "xG per 90"),
+        ("Conversion Rate %", "Goal conversion, %"),
+        ("Header Goals", "Head goals per 90"),
+        ("Expected Assists", "xA per 90"),
+        ("Offensive Duels", "Offensive duels per 90"),
+        ("Offensive Duel Success %", "Offensive duels won, %"),
+        ("Progressive Runs", "Progressive runs per 90"),
+        ("Shots", "Shots per 90"),
+        ("Shooting Accuracy %", "Shots on target, %"),
+        ("Touches in Opposition Box", "Touches in box per 90"),
+    ]:
+        ATTACKING.append((lab, float(np.nan_to_num(pct_of_row(row, met), nan=0.0))))
 
-        DEFENSIVE = []
-        for lab, met in [
-            ("Aerial Duels","Aerial duels per 90"),
-            ("Aerial Duel Success %","Aerial duels won, %"),
-            ("Defensive Duels","Defensive duels per 90"),
-            ("Defensive Duel Success %","Defensive duels won, %"),
-            ("PAdj. Interceptions","PAdj Interceptions"),
-        ]:
-            DEFENSIVE.append((lab, float(np.nan_to_num(pct_of_row(row, met), nan=0.0))))
+    DEFENSIVE = []
+    for lab, met in [
+        ("Aerial Duels", "Aerial duels per 90"),
+        ("Aerial Duel Success %", "Aerial duels won, %"),
+        ("Defensive Duels", "Defensive duels per 90"),
+        ("Defensive Duel Success %", "Defensive duels won, %"),
+        ("PAdj. Interceptions", "PAdj Interceptions"),
+    ]:
+        DEFENSIVE.append((lab, float(np.nan_to_num(pct_of_row(row, met), nan=0.0))))
 
-        POSSESSION = []
-        for lab, met in [
-            ("Dribbles","Dribbles per 90"),
-            ("Dribbling Success %","Successful dribbles, %"),
-            ("Key Passes","Key passes per 90"),
-            ("Passes","Passes per 90"),
-            ("Passing Accuracy %","Accurate passes, %"),
-            ("Passes to Penalty Area","Passes to penalty area per 90"),
-            ("Passes to Penalty Area %","Accurate passes to penalty area, %"),
-            ("Smart Passes","Smart passes per 90"),
-        ]:
-            POSSESSION.append((lab, float(np.nan_to_num(pct_of_row(row, met), nan=0.0))))
+    POSSESSION = []
+    for lab, met in [
+        ("Deep Completions", "Deep completions per 90"),
+        ("Dribbles", "Dribbles per 90"),
+        ("Dribbling Success %", "Successful dribbles, %"),
+        ("Key Passes", "Key passes per 90"),
+        ("Passes", "Passes per 90"),
+        ("Passing Accuracy %", "Accurate passes, %"),
+        ("Passes to Penalty Area", "Passes to penalty area per 90"),
+        ("Passes to Penalty Area %", "Accurate passes to penalty area, %"),
+        ("Smart Passes", "Smart passes per 90"),
+    ]:
+        POSSESSION.append((lab, float(np.nan_to_num(pct_of_row(row, met), nan=0.0))))
 
-        col_html = (
-            "<div class='metrics-grid'>"
-            f"{metrics_section_html('ATTACKING', ATTACKING)}"
-            f"{metrics_section_html('DEFENSIVE', DEFENSIVE)}"
-            f"{metrics_section_html('POSSESSION', POSSESSION)}"
-            "</div>"
-        )
-        st.markdown(col_html, unsafe_allow_html=True)
-            ("Dribbles","Dribbles per 90"),
-            ("Dribbling Success %","Successful dribbles, %"),
-            ("Key Passes","Key passes per 90"),
-            ("Passes","Passes per 90"),
-            ("Passing Accuracy %","Accurate passes, %"),
-            ("Passes to Penalty Area","Passes to penalty area per 90"),
-            ("Passes to Penalty Area %","Accurate passes to penalty area, %"),
-            ("Smart Passes","Smart passes per 90"),
-        ]:
-            POSSESSION.append((lab, float(np.nan_to_num(pct_of_row(row, met), nan=0.0))))
+    col_html = (
+        "<div class='metrics-grid'>"
+        f"{metrics_section_html('ATTACKING', ATTACKING)}"
+        f"{metrics_section_html('DEFENSIVE', DEFENSIVE)}"
+        f"{metrics_section_html('POSSESSION', POSSESSION)}"
+        "</div>"
+    )
+    st.markdown(col_html, unsafe_allow_html=True)
 
-        col_html = (
-            "<div class='metrics-grid'>"
-            f"{metrics_section_html('ATTACKING', ATTACKING)}"
-            f"{metrics_section_html('DEFENSIVE', DEFENSIVE)}"
-            f"{metrics_section_html('POSSESSION', POSSESSION)}"
-            "</div>"
-        )
-        st.markdown(col_html, unsafe_allow_html=True)
 
 
 
