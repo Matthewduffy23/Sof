@@ -1,22 +1,21 @@
-# app_top20_tiles.py — Top 20 Tiles (CF) + per-player dropdown
-# - Shows Preferred Foot under contract (blank if missing)
-# - Team line shows "Team · League"
-# - No raw value labels in dropdown
-# - All pills capped visually at 99
-# Requirements: streamlit, pandas, numpy
+# app_top20_tiles.py — Top 20 Tiles (CF) + per-player dropdown + FotMob photos
+# Requirements: streamlit, pandas, numpy, requests
 
-import io, re, math, unicodedata
+import io, re, math, unicodedata, functools, json
 from pathlib import Path
+from urllib.parse import quote
+
 import streamlit as st
 import pandas as pd
 import numpy as np
+import requests
 
 # ----------------- PAGE -----------------
 st.set_page_config(page_title="Advanced Striker Scouting — Top 20 Tiles", layout="wide")
 st.title("🔎 Advanced Striker Scouting — Top 20 Tiles")
 st.caption(
     "Ranked by ‘All in’ (league-weighted). Pills show Goal Threat, Link-Up CF, Target Man CF. "
-    "Pool = Position starts with CF. Flag = Birth country. No team badges."
+    "Pool = Position starts with CF. Flag = Birth country. Fotos via FotMob if available."
 )
 
 # ----------------- STYLE -----------------
@@ -31,14 +30,18 @@ st.markdown("""
     gap:12px; align-items:start; background:var(--card); border:1px solid #252b3a;
     border-radius:18px; padding:16px;
   }
-  .avatar{ width:96px; height:96px; border-radius:12px; background:#0b0d12 url('https://i.redd.it/43axcjdu59nd1.jpeg') center/cover no-repeat; border:1px solid #2a3145; }
+  .avatar{
+    width:96px; height:96px; border-radius:12px;
+    background-color:#0b0d12; background-size:cover; background-position:center;
+    border:1px solid #2a3145;
+  }
   .leftcol{ display:flex; flex-direction:column; align-items:center; gap:8px; }
   .name{ font-weight:800; font-size:22px; color:#e8ecff; margin-bottom:6px; }
   .sub{ color:#a8b3cf; font-size:15px; }
   .pill{ padding:2px 10px; border-radius:9px; font-weight:800; font-size:18px; color:#0b0d12; display:inline-block; min-width:42px; text-align:center; }
   .row{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:4px 0; }
   .chip{ background:var(--soft); color:#cbd5f5; border:1px solid #2d3550; padding:3px 10px; border-radius:10px; font-size:13px; line-height:18px; }
-  .flagchip{ display:inline-flex; align-items:center; gap:6px; background:var(--soft); color:#cbd5f5; border:1px solid #2d3550; padding:2px 8px; border-radius:10px; font-size:13px; line-height:18px; height:22px;}
+  .flagchip{ display:inline-flex; align-items:center; gap:6px; background:var(--soft); color:#cbd5f5; border:1px solid #2d3550; padding:2px 8px; border-radius:10px; font-size:13px; height:22px;}
   .flagchip img{ width:18px; height:14px; border-radius:2px; display:block; }
   .pos{ color:#eaf0ff; font-weight:700; padding:4px 10px; border-radius:10px; font-size:12px; border:1px solid rgba(255,255,255,.08); }
   .teamline{ color:#e6ebff; font-size:15px; font-weight:400; margin-top:2px; }
@@ -47,7 +50,7 @@ st.markdown("""
 
   /* Metrics dropdown styling */
   .metric-section{ background:#121621; border:1px solid #242b3b; border-radius:14px; padding:10px 12px; }
-  .m-title{ color:#e8ecff; font-weight:800; letter-spacing:.02em; margin:4px 0 10px 0; }
+  .m-title{ color:#e8ecff; font-weight:800; letter-spacing:.02em; margin:4px 0 10px 0; font-size:20px; text-transform:uppercase; }
   .m-row{ display:flex; justify-content:space-between; align-items:center; padding:8px 8px; border-radius:10px; }
   .m-row + .m-row{ margin-top:6px; }
   .m-label{ color:#c9d3f2; font-size:16px; }
@@ -234,7 +237,7 @@ POS_COLORS={
 }
 def chip_color(p:str)->str: return POS_COLORS.get(p.strip().upper(),"#2d3550")
 
-# ----------------- Flags (Twemoji SVG for ALL countries) -----------------
+# ----------------- Flags (Twemoji) -----------------
 COUNTRY_TO_CC = {
     "united kingdom":"gb","great britain":"gb","northern ireland":"gb",
     "england":"eng","scotland":"sct","wales":"wls",
@@ -253,9 +256,9 @@ COUNTRY_TO_CC = {
     "malta":"mt","cyprus":"cy","luxembourg":"lu","andorra":"ad","monaco":"mc","san marino":"sm",
 }
 TWEMOJI_SPECIAL = {
-    "eng": "1f3f4-e0067-e0062-e0065-e006e-e0067-e007f",
-    "sct": "1f3f4-e0067-e0062-e0073-e0063-e006f-e0074-e007f",
-    "wls": "1f3f4-e0067-e0062-e0077-e0061-e006c-e0065-e007f",
+    "eng": "1f3f4-e0067-e0062-e0065-e006e-e0067-e007f",  # gbeng
+    "sct": "1f3f4-e0067-e0062-e0073-e0063-e0074-e007f",  # gbsct
+    "wls": "1f3f4-e0067-e0062-e0077-e006c-e0073-e007f",  # gbwls
 }
 def country_norm(s: str) -> str:
     if not s: return ""
@@ -267,8 +270,20 @@ def cc_to_twemoji_code(cc: str) -> str | None:
     cp1 = 0x1F1E6 + (ord(a) - ord('A'))
     cp2 = 0x1F1E6 + (ord(b) - ord('A'))
     return f"{cp1:04x}-{cp2:04x}"
+def flag_img_html(country_name: str) -> str:
+    n = country_norm(country_name)
+    cc = COUNTRY_TO_CC.get(n, "")
+    if cc in TWEMOJI_SPECIAL:
+        code = TWEMOJI_SPECIAL[cc]
+        src = f"https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/svg/{code}.svg"
+        return f"<span class='flagchip'><img src='{src}' alt='{country_name}'></span>"
+    code = cc_to_twemoji_code(cc) if len(cc) == 2 else None
+    if code:
+        src = f"https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/svg/{code}.svg"
+        return f"<span class='flagchip'><img src='{src}' alt='{country_name}'></span>"
+    return "<span class='chip'>—</span>"
 
-# Preferred foot getter (handles a few likely column names)
+# Preferred foot getter
 def get_foot_text(row: pd.Series) -> str:
     for c in ["Foot","Preferred foot","Preferred Foot"]:
         if c in row and isinstance(row[c], str) and row[c].strip():
@@ -276,30 +291,98 @@ def get_foot_text(row: pd.Series) -> str:
     return ""
 
 def flag_and_meta_html(country_name: str, age: int, contract_year: int, foot_txt: str) -> str:
-    n = country_norm(country_name)
-    cc = COUNTRY_TO_CC.get(n, "")
-    if cc in TWEMOJI_SPECIAL:
-        code = TWEMOJI_SPECIAL[cc]
-        src = f"https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/svg/{code}.svg"
-        flag_html = f"<span class='flagchip'><img src='{src}' alt='{country_name}'></span>"
-    else:
-        code = cc_to_twemoji_code(cc) if len(cc) == 2 else None
-        if code:
-            src = f"https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/svg/{code}.svg"
-            flag_html = f"<span class='flagchip'><img src='{src}' alt='{country_name}'></span>"
-        else:
-            flag_html = "<span class='chip'>—</span>"
+    flag_html = flag_img_html(country_name)
     age_chip = f"<span class='chip'>{age}y.o.</span>"
     yr = f"{contract_year}" if contract_year > 0 else "—"
     contract_chip = f"<span class='chip'>{yr}</span>"
     top_row = f"<div class='row'>{flag_html}{age_chip}{contract_chip}</div>"
-    # foot row (blank if not available)
-    if foot_txt:
-        foot_chip = f"<span class='chip'>{foot_txt}</span>"
-        foot_row = f"<div class='row'>{foot_chip}</div>"
-    else:
-        foot_row = "<div class='row'></div>"
+    foot_row = f"<div class='row'><span class='chip'>{foot_txt}</span></div>" if foot_txt else "<div class='row'></div>"
     return top_row + foot_row
+
+# ---------- FotMob image helpers ----------
+FOTMOB_OVERRIDES: dict[str, int] = {}  # e.g., { "Erling Haaland|Manchester City": 8561 }
+FOTMOB_SEARCH = "https://www.fotmob.com/api/search?q={q}"
+FOTMOB_IMG    = "https://images.fotmob.com/image_resources/playerimages/{pid}.png"
+
+def _norm_name(s: str) -> str:
+    return unicodedata.normalize("NFKD", s or "").encode("ascii","ignore").decode("ascii").strip().lower()
+
+@st.cache_data(show_spinner=False, ttl=60*60)
+def _fotmob_search_cached(query: str) -> dict | None:
+    try:
+        r = requests.get(FOTMOB_SEARCH.format(q=quote(query)), timeout=6)
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
+    return None
+
+def _best_player_hit(json_obj: dict, player_name: str, team_name: str) -> int | None:
+    if not json_obj:
+        return None
+    pn = _norm_name(player_name)
+    tn = _norm_name(team_name)
+    candidates = []
+    for key in ("players", "topResults", "results"):
+        obj = json_obj.get(key)
+        if isinstance(obj, list):
+            candidates.extend(obj)
+    # strict: team + surname
+    for c in candidates:
+        pid = c.get("id") or c.get("entity", {}).get("id")
+        n   = c.get("name") or c.get("title") or ""
+        t   = c.get("team") or c.get("subtitle") or ""
+        if not pid: 
+            continue
+        n_norm = _norm_name(n); t_norm = _norm_name(t)
+        surname = pn.split()[-1]
+        if surname and surname in n_norm and (tn and tn in t_norm):
+            return int(pid)
+    # looser: surname only
+    for c in candidates:
+        pid = c.get("id") or c.get("entity", {}).get("id")
+        n   = c.get("name") or c.get("title") or ""
+        if not pid: 
+            continue
+        n_norm = _norm_name(n)
+        surname = pn.split()[-1]
+        if surname and surname in n_norm:
+            return int(pid)
+    return None
+
+@functools.lru_cache(maxsize=2048)
+def resolve_fotmob_id(player_name: str, team_name: str) -> int | None:
+    key = f"{player_name}|{team_name}"
+    if key in FOTMOB_OVERRIDES:
+        return int(FOTMOB_OVERRIDES[key])
+    q = f"{player_name} {team_name}".strip()
+    data = _fotmob_search_cached(q)
+    pid = _best_player_hit(data or {}, player_name, team_name)
+    if pid:
+        return pid
+    data2 = _fotmob_search_cached(player_name)
+    pid2 = _best_player_hit(data2 or {}, player_name, team_name)
+    return pid2
+
+@st.cache_data(show_spinner=False)
+def _url_exists(url: str) -> bool:
+    try:
+        r = requests.head(url, timeout=6, allow_redirects=True)
+        if r.status_code == 200:
+            return True
+        if r.status_code in (403, 405):
+            r = requests.get(url, timeout=6, stream=True)
+            return r.status_code == 200
+    except Exception:
+        pass
+    return False
+
+def fotmob_image_url_or_none(player_name: str, team_name: str) -> str | None:
+    pid = resolve_fotmob_id(player_name, team_name)
+    if not pid:
+        return None
+    url = FOTMOB_IMG.format(pid=pid)
+    return url if _url_exists(url) else None
 
 # ---------- Helpers for dropdown metrics ----------
 def pct_of_row(row: pd.Series, metric: str) -> float:
@@ -320,6 +403,8 @@ def metrics_section_html(title: str, items: list[tuple[str, float]]) -> str:
     return f"<div class='metric-section'><div class='m-title'>{title}</div>{''.join(rows)}</div>"
 
 # ----------------- RENDER -----------------
+PLACEHOLDER_IMG = "https://i.redd.it/43axcjdu59nd1.jpeg"
+
 for idx,row in ranked.iterrows():
     rank = idx+1
     player = str(row.get("Player","")) or ""
@@ -331,6 +416,9 @@ for idx,row in ranked.iterrows():
     contract_year = int(cy.year) if pd.notna(cy) else 0
     birth_country = str(row.get("Birth country","") or "")
     foot_txt = get_foot_text(row)
+
+    # FotMob avatar (fallback to placeholder)
+    avatar_url = fotmob_image_url_or_none(player, team) or PLACEHOLDER_IMG
 
     gt_i = show99(row["Score_GT"])
     lu_i = show99(row["Score_LU"])
@@ -348,7 +436,7 @@ for idx,row in ranked.iterrows():
     <div class='wrap'>
       <div class='player-card'>
         <div class='leftcol'>
-          <div class='avatar'></div>
+          <div class='avatar' style="background-image:url('{avatar_url}');"></div>
           {flag_and_meta_html(birth_country, age, contract_year, foot_txt)}
         </div>
         <div>
@@ -426,6 +514,7 @@ for idx,row in ranked.iterrows():
             "</div>"
         )
         st.markdown(col_html, unsafe_allow_html=True)
+
 
 
 
