@@ -1,7 +1,7 @@
-# app_top20_tiles.py — Top 20 Tiles (CF) + per-player dropdown + FotMob photos (TEAM ➜ SQUAD ➜ PLAYER)
+# app_top20_tiles.py — Top 20 Tiles (CF) + per-player dropdown + FotMob photos (HTML scrape: team ➜ squad ➜ player)
 # Requirements: streamlit, pandas, numpy, requests
 
-import io, re, math, unicodedata, functools, time
+import io, re, math, json, time, unicodedata
 from pathlib import Path
 from urllib.parse import quote
 
@@ -15,8 +15,11 @@ st.set_page_config(page_title="Advanced Striker Scouting — Top 20 Tiles", layo
 st.title("🔎 Advanced Striker Scouting — Top 20 Tiles")
 st.caption(
     "Ranked by ‘All in’ (league-weighted). Pills show Goal Threat, Link-Up CF, Target Man CF. "
-    "Pool = Position starts with CF. Flag = Birth country. Photos via FotMob (team ➜ squad ➜ player)."
+    "Pool = Position starts with CF. Flag = Birth country. Photos via FotMob (HTML scrape: team → squad → player by surname)."
 )
+
+# Optional: a debug toggle so you can see what's happening
+DEBUG_PHOTOS = st.sidebar.checkbox("Debug player photos", False)
 
 # ----------------- STYLE -----------------
 st.markdown("""
@@ -47,6 +50,8 @@ st.markdown("""
   .teamline{ color:#e6ebff; font-size:15px; font-weight:400; margin-top:2px; }
   .rank{ color:#94a0c6; font-weight:800; font-size:18px; text-align:right; }
   .divider{ height:12px; }
+
+  /* Metrics dropdown styling */
   .metric-section{ background:#121621; border:1px solid #242b3b; border-radius:14px; padding:10px 12px; }
   .m-title{ color:#e8ecff; font-weight:800; letter-spacing:.02em; margin:4px 0 10px 0; font-size:20px; text-transform:uppercase; }
   .m-row{ display:flex; justify-content:space-between; align-items:center; padding:8px 8px; border-radius:10px; }
@@ -280,7 +285,6 @@ def flag_img_html(country_name: str) -> str:
         return f"<span class='flagchip'><img src='{src}' alt='{country_name}'></span>"
     return "<span class='chip'>—</span>"
 
-# Preferred foot getter (works even if missing)
 def get_foot_text(row: pd.Series) -> str:
     for c in ["Foot","Preferred foot","Preferred Foot"]:
         if c in row and isinstance(row[c], str) and row[c].strip():
@@ -296,10 +300,10 @@ def flag_and_meta_html(country_name: str, age: int, contract_year: int, foot_txt
     foot_row = f"<div class='row'><span class='chip'>{foot_txt}</span></div>" if foot_txt else "<div class='row'></div>"
     return top_row + foot_row
 
-# =============== FOTMOB: TEAM ➜ SQUAD ➜ PLAYER (surname + team) ===============
-_HTTP_HEADERS = {
+# ====================== FOTMOB (HTML scrape) — TEAM ➜ SQUAD ➜ PLAYER ======================
+_HTML_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-    "Accept": "application/json, text/plain, */*",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Referer": "https://www.fotmob.com/",
     "Accept-Language": "en-US,en;q=0.9",
 }
@@ -307,7 +311,36 @@ _HTTP_HEADERS = {
 def _norm(s: str) -> str:
     return unicodedata.normalize("NFKD", s or "").encode("ascii","ignore").decode("ascii").strip().lower()
 
-# common UK teams fallback map (if the search endpoint misbehaves)
+@st.cache_data(show_spinner=False, ttl=6*3600)
+def _get_html(url: str) -> str:
+    try:
+        r = requests.get(url, headers=_HTML_HEADERS, timeout=12)
+        if r.status_code == 200: return r.text
+        if r.status_code in (403, 429, 500, 502, 503, 504):
+            time.sleep(0.7)
+            r = requests.get(url, headers=_HTML_HEADERS, timeout=12)
+            if r.status_code == 200: return r.text
+    except Exception:
+        pass
+    return ""
+
+# Step 1: resolve team id by scraping search HTML
+@st.cache_data(show_spinner=False, ttl=24*3600)
+def _team_id_from_search_html(team_name: str) -> int | None:
+    q = quote(team_name)
+    html = _get_html(f"https://www.fotmob.com/search/{q}")
+    if not html:
+        return None
+    # Look for links like /teams/8650/... or /teams/8650
+    m = re.search(r'/teams/(\d+)[/"-]', html)
+    if m:
+        try:
+            return int(m.group(1))
+        except Exception:
+            return None
+    return None
+
+# Fallback mapping for common UK teams (helps if search page is A/B tested)
 _TEAM_FALLBACK_IDS = {
     "arsenal": 9823, "aston villa": 10260, "villa": 10260, "bournemouth": 8678, "afc bournemouth": 8678,
     "brentford": 9937, "brighton": 10204, "brighton & hove albion": 10204, "brighton and hove albion": 10204,
@@ -325,130 +358,97 @@ _TEAM_FALLBACK_IDS = {
     "oxford united": 11443, "millwall": 8206, "cardiff city": 8675, "stoke city": 9825, "plymouth argyle": 10207,
 }
 
-@st.cache_data(show_spinner=False, ttl=60*60)
-def _http_json(url: str) -> dict | None:
-    try:
-        r = requests.get(url, headers=_HTTP_HEADERS, timeout=10)
-        if r.status_code == 200:
-            return r.json()
-        if r.status_code in (429, 500, 502, 503, 504):
-            time.sleep(0.6)
-            r = requests.get(url, headers=_HTTP_HEADERS, timeout=10)
-            if r.status_code == 200:
-                return r.json()
-    except Exception:
-        pass
-    return None
-
-def _team_id_from_search(team_name: str) -> int | None:
-    q = quote(team_name)
-    data = _http_json(f"https://www.fotmob.com/api/search?q={q}")
-    if not isinstance(data, dict):
-        return None
-    tn = _norm(team_name)
-    buckets = []
-    for key in ("teams", "topResults", "results"):
-        v = data.get(key)
-        if isinstance(v, list):
-            buckets.extend(v)
-    # 1) exact name match
-    for it in buckets:
-        typ = (it.get("type") or it.get("entity", {}).get("type") or "").lower()
-        name = _norm(it.get("name") or it.get("title") or "")
-        pid = it.get("id") or (it.get("entity") or {}).get("id")
-        if pid and typ == "team" and name == tn:
-            try: return int(pid)
-            except: pass
-    # 2) substring match
-    for it in buckets:
-        typ = (it.get("type") or it.get("entity", {}).get("type") or "").lower()
-        name = _norm(it.get("name") or it.get("title") or "")
-        pid = it.get("id") or (it.get("entity") or {}).get("id")
-        if pid and typ == "team" and (tn in name or name in tn):
-            try: return int(pid)
-            except: pass
-    return None
-
 @st.cache_data(show_spinner=False, ttl=24*3600)
 def resolve_team_id(team_name: str) -> int | None:
-    # try API search
-    pid = _team_id_from_search(team_name)
-    if pid: return pid
-    # fallback map
+    tid = _team_id_from_search_html(team_name)
+    if DEBUG_PHOTOS:
+        st.write(f"team search html for '{team_name}' → {tid}")
+    if tid:
+        return tid
     return _TEAM_FALLBACK_IDS.get(_norm(team_name))
 
+# Step 2: open team page and extract squad from __NEXT_DATA__
 @st.cache_data(show_spinner=False, ttl=12*3600)
-def team_squad(team_id: int) -> list[dict]:
-    """Return flat list of players from FotMob team API."""
-    data = _http_json(f"https://www.fotmob.com/api/teams?id={team_id}")
-    players = []
-    if not isinstance(data, dict):
-        return players
-    for sec in data.get("squad", []) or []:
-        players.extend(sec.get("players", []) or [])
-    return players
-
-def _surname_match(squad_name: str, surname: str) -> bool:
-    n = _norm(squad_name).replace("-", " ").replace(".", "")
-    s = _norm(surname).replace("-", " ").replace(".", "")
-    # prefer last token of the squad_name
-    n_last = n.split()[-1] if n else ""
-    return (s == n_last) or (s in n)
-
-def player_id_from_team_surname(team_name: str, surname: str) -> int | None:
-    tid = resolve_team_id(team_name)
-    if not tid:
-        return None
-    sq = team_squad(tid)
-    if not sq:
-        return None
-
-    # 1) exact end-with surname
-    for p in sq:
-        if _surname_match(p.get("name",""), surname):
-            pid = p.get("id")
-            if isinstance(pid, int): return pid
-            if isinstance(pid, str) and pid.isdigit(): return int(pid)
-
-    # 2) looser contains (already checked in _surname_match); try again just in case
-    for p in sq:
-        name = _norm(p.get("name",""))
-        if _norm(surname) in name:
-            pid = p.get("id")
-            if isinstance(pid, int): return pid
-            if isinstance(pid, str) and pid.isdigit(): return int(pid)
-
-    return None
-
-@st.cache_data(show_spinner=False)
-def _url_ok(url: str) -> bool:
+def _team_players_from_html(team_id: int) -> list[dict]:
+    # /teams/{id} works; slug is optional
+    html = _get_html(f"https://www.fotmob.com/teams/{team_id}")
+    if not html:
+        return []
+    # pull Next.js data blob
+    m = re.search(r'__NEXT_DATA__" type="application/json">(.+?)</script>', html)
+    if not m:
+        return []
     try:
-        # FotMob CDN sometimes rejects HEAD, so do GET stream with headers
-        r = requests.get(url, headers=_HTTP_HEADERS, timeout=8, stream=True)
-        return r.status_code == 200
+        data = json.loads(m.group(1))
     except Exception:
-        return False
+        return []
+
+    players = []
+    # Walk nested JSON; collect dicts that look like players
+    def walk(obj):
+        if isinstance(obj, dict):
+            # a "player-like" object: has id + name (name looks like a human)
+            if "id" in obj and "name" in obj and isinstance(obj["name"], str):
+                pid = obj["id"]
+                if (isinstance(pid, int) or (isinstance(pid, str) and pid.isdigit())) and re.search(r"[a-zA-Z]", obj["name"]):
+                    players.append({"id": int(pid), "name": obj["name"]})
+            for v in obj.values(): walk(v)
+        elif isinstance(obj, list):
+            for v in obj: walk(v)
+
+    walk(data)
+
+    # Dedup by id and keep last (usually the squad entry)
+    seen=set(); out=[]
+    for p in players:
+        if p["id"] not in seen:
+            seen.add(p["id"]); out.append(p)
+    if DEBUG_PHOTOS:
+        st.write(f"squad extract for team {team_id}: found {len(out)} candidate name/id pairs")
+    return out
+
+def _surname_match(full_name: str, surname: str) -> bool:
+    n = _norm(full_name).replace("-", " ").replace(".", "")
+    s = _norm(surname).replace("-", " ").replace(".", "")
+    # exact last-token, else substring (helps with double-barrel)
+    last = n.split()[-1] if n else ""
+    return (s == last) or (s in n)
 
 _VIKTOR_GYOKERES_ID = 664500
 def _looks_like_gyokeres(surname: str) -> bool:
     n = _norm(surname)
     return n.startswith("gyokeres") or n.startswith("gyökeres") or n == "gyokeres"
 
+@st.cache_data(show_spinner=False, ttl=12*3600)
 def fotmob_image_by_surname(surname: str, team_name: str) -> str | None:
-    pid = player_id_from_team_surname(team_name, surname)
-    if pid:
-        url = f"https://images.fotmob.com/image_resources/playerimages/{pid}.png"
-        if _url_ok(url):
-            return url
+    tid = resolve_team_id(team_name)
+    if not tid:
+        if DEBUG_PHOTOS: st.write(f"no team id for '{team_name}'")
+        # Gyökeres special fallback if lookup fails entirely
+        if _looks_like_gyokeres(surname):
+            return f"https://images.fotmob.com/image_resources/playerimages/{_VIKTOR_GYOKERES_ID}.png"
+        return None
 
-    # Requested: only if search failed, fallback to Gyökeres ID when surname looks like it
+    squad = _team_players_from_html(tid)
+    # filter by surname first
+    best = None
+    for p in squad:
+        if _surname_match(p["name"], surname):
+            best = p["id"]
+            break
+
+    if not best and DEBUG_PHOTOS:
+        st.write(f"no match for '{surname}' in team {tid} ({team_name}); squad size={len(squad)}")
+
+    if best:
+        return f"https://images.fotmob.com/image_resources/playerimages/{best}.png"
+
+    # Gyökeres special fallback (as asked)
     if _looks_like_gyokeres(surname):
-        url = f"https://images.fotmob.com/image_resources/playerimages/{_VIKTOR_GYOKERES_ID}.png"
-        if _url_ok(url):
-            return url
+        return f"https://images.fotmob.com/image_resources/playerimages/{_VIKTOR_GYOKERES_ID}.png"
 
     return None
-# =========================== END FOTMOB HELPERS ===========================
+# ====================== END: FOTMOB SCRAPER ======================
 
 # ---------- Helpers for dropdown metrics ----------
 def pct_of_row(row: pd.Series, metric: str) -> float:
@@ -473,7 +473,7 @@ PLACEHOLDER_IMG = "https://i.redd.it/43axcjdu59nd1.jpeg"
 
 for idx,row in ranked.iterrows():
     rank = idx+1
-    # IMPORTANT: 'Player' in your dataset is SURNAME ONLY (per your note)
+    # IMPORTANT: your 'Player' column is **surname only**
     surname = str(row.get("Player","")) or ""
     team    = str(row.get("Team","")) or ""
     league  = str(row.get("League","")) or ""
@@ -484,8 +484,10 @@ for idx,row in ranked.iterrows():
     birth_country = str(row.get("Birth country","") or "")
     foot_txt = get_foot_text(row)
 
-    # FotMob avatar by SURNAME + TEAM
+    # FotMob avatar via surname + team (HTML path)
     avatar_url = fotmob_image_by_surname(surname, team) or PLACEHOLDER_IMG
+    if DEBUG_PHOTOS:
+        st.write(f"→ {surname} ({team}) avatar = {avatar_url}")
 
     gt_i = show99(row["Score_GT"])
     lu_i = show99(row["Score_LU"])
@@ -581,6 +583,7 @@ for idx,row in ranked.iterrows():
             "</div>"
         )
         st.markdown(col_html, unsafe_allow_html=True)
+
 
 
 
