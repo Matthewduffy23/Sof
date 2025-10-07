@@ -1,4 +1,4 @@
-# app_top20_tiles.py — Top 20 Tiles (CF) + FIFA-style profile rows
+# app_top20_tiles.py — Top 20 Tiles (CF) + FIFA-style profile rows (no right pill)
 # Requirements: streamlit, pandas, numpy
 
 import io, re, math, unicodedata
@@ -82,16 +82,16 @@ INCLUDED_LEAGUES = [
     'USA 2.','Uruguay 1.','Uzbekistan 1.','Venezuela 1.','Wales 1.'
 ]
 
-# These are the features needed for scoring + many common metrics in the CSV
+# Metrics we may use (superset). If a column isn't in your CSV, it's skipped safely.
 FEATURES = [
     'Defensive duels per 90','Defensive duels won, %','Aerial duels per 90','Aerial duels won, %','PAdj Interceptions',
     'Non-penalty goals per 90','xG per 90','Shots per 90','Shots on target, %','Goal conversion, %','Crosses per 90',
     'Accurate crosses, %','Dribbles per 90','Successful dribbles, %','Head goals per 90','Key passes per 90',
     'Touches in box per 90','Progressive runs per 90','Accelerations per 90','Passes per 90','Accurate passes, %',
     'xA per 90','Passes to penalty area per 90','Accurate passes to penalty area, %','Deep completions per 90','Smart passes per 90',
-    # The two below are optional—if present in your CSV, we'll use them
     'Offensive duels per 90','Offensive duels won, %'
 ]
+
 ROLES = {
     'Goal Threat CF': {'metrics':{'Non-penalty goals per 90':3,'Shots per 90':1.5,'xG per 90':3,'Touches in box per 90':1,'Shots on target, %':0.5}},
     'Link-Up CF':     {'metrics':{'Passes per 90':2,'Passes to penalty area per 90':1.5,'Deep completions per 90':1,'Smart passes per 90':1.5,
@@ -182,20 +182,19 @@ df_f=df_f[df_f["Position"].astype(str).str.upper().str.startswith("CF")]
 df_f=df_f[df_f["Minutes played"].between(min_minutes,max_minutes)]
 df_f=df_f[df_f["Age"].between(min_age,max_age)]
 if apply_contract: df_f=df_f[df_f["Contract expires"].dt.year<=cutoff_year]
-# ensure numeric for *every* metric we might use if present
 for c in FEATURES:
     if c in df_f.columns:
         df_f[c]=pd.to_numeric(df_f[c],errors="coerce")
-df_f=df_f.dropna(subset=[c for c in FEATURES if c in df_f.columns], how="all")
+# keep rows that have at least one metric present
+metric_cols = [c for c in FEATURES if c in df_f.columns]
+df_f = df_f.dropna(subset=metric_cols, how="all")
 df_f["League Strength"]=df_f["League"].map(LEAGUE_STRENGTHS).fillna(50.0)
 df_f=df_f[(df_f["League Strength"]>=float(min_strength))&(df_f["League Strength"]<=float(max_strength))]
 df_f=df_f[(df_f["Market value"]>=min_value)&(df_f["Market value"]<=max_value)]
 if df_f.empty: st.warning("No players after filters. Loosen filters."); st.stop()
 
 # ----------------- Percentiles -----------------
-# Compute league percentiles for any metric that exists in the df
-metrics_present = [m for m in FEATURES if m in df_f.columns]
-for feat in metrics_present:
+for feat in metric_cols:
     df_f[f"{feat} Percentile"]=df_f.groupby("League")[feat].transform(lambda x: x.rank(pct=True)*100.0)
 
 def role_score(df_in:pd.DataFrame,metrics:dict)->pd.Series:
@@ -293,18 +292,10 @@ def flag_chip_html(country_name: str, age: int, contract_year: int) -> str:
 
 # ======= Profile helpers =======
 def pct_of_row(row: pd.Series, metric: str) -> float:
-    """Return 0..100 percentile for metric; safe even if column/percentile missing."""
+    """Return 0..100 percentile for a metric; safe even if missing."""
     col = f"{metric} Percentile"
-    if col in row and pd.notna(row[col]):
-        return float(row[col])
-    if metric in df_f.columns:
-        # compute on the fly within this league
-        league = row["League"]
-        series = df_f.loc[df_f["League"]==league, metric]
-        if series.notna().any() and pd.notna(row.get(metric, np.nan)):
-            ranks = series.rank(pct=True)*100.0
-            return float(ranks.get(row.name, 0.0))
-    return 0.0
+    v = row.get(col, np.nan)
+    return float(v) if pd.notna(v) else 0.0
 
 def make_row(label: str, pct: float) -> str:
     pct = max(0.0, min(100.0, float(pct)))
@@ -323,13 +314,10 @@ def make_row(label: str, pct: float) -> str:
 def render_section(items, row) -> str:
     rows = []
     for lab, met in items:
-        if (met in df_f.columns) or (f"{met} Percentile" in df_f.columns):
-            rows.append(make_row(lab, pct_of_row(row, met)))
-    if not rows:
-        return "<div class='metrics'>No metrics available.</div>"
+        rows.append(make_row(lab, pct_of_row(row, met)))
     return f"<div class='metrics'>{''.join(rows)}</div>"
 
-# === sections (unchanged; titles & metrics exactly as requested) ===
+# === sections (exact titles & metrics you requested) ===
 ATTACKING_SPEC = [
     ("Crosses","Crosses per 90"),
     ("Crossing Accuracy %","Accurate crosses, %"),
@@ -365,6 +353,8 @@ POSSESSION_SPEC = [
 ]
 
 # ----------------- RENDER -----------------
+ranked=df_f.sort_values("Score_ALL",ascending=False).head(int(top_n)).copy().reset_index(drop=True)
+
 for idx,row in ranked.iterrows():
     rank = idx+1
     player = str(row.get("Player","")) or ""
@@ -387,6 +377,7 @@ for idx,row in ranked.iterrows():
     if "CF" in codes: codes = ["CF"] + [c for c in codes if c!="CF"]
     chips_html = "".join(f"<span class='pos' style='background:{chip_color(c)}'>{c}</span> " for c in dict.fromkeys(codes))
 
+    # Tile
     st.markdown(f"""
     <div class='wrap'>
       <div class='player-card'>
@@ -417,7 +408,7 @@ for idx,row in ranked.iterrows():
     <div class='divider'></div>
     """, unsafe_allow_html=True)
 
-    # ---- Profile (dropdown) ----
+    # ---- Per-player profile (dropdown) ----
     with st.expander(f"📊 Profile: {player}", expanded=False):
         tabs = st.tabs(["Attacking", "Defensive", "Possession"])
         with tabs[0]:
@@ -429,6 +420,7 @@ for idx,row in ranked.iterrows():
         with tabs[2]:
             html = f"<div class='metrics-card'><div class='section-h'>POSSESSION</div>{render_section(POSSESSION_SPEC, row)}</div>"
             st.markdown(html, unsafe_allow_html=True)
+
 
 
 
