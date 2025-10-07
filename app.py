@@ -1,4 +1,5 @@
 # app_top20_tiles.py — Top 20 Tiles (CF) with fixed image, colored role tags, proper flags (incl. ENG/SCT/WLS)
+# + per-player dropdown of individual metrics (Attacking / Defensive / Possession)
 # Requirements: streamlit, pandas, numpy
 
 import io, re, math, unicodedata
@@ -41,6 +42,20 @@ st.markdown("""
   .teamline{ color:#e6ebff; font-size:15px; font-weight:400; margin-top:2px; }
   .rank{ color:#94a0c6; font-weight:800; font-size:18px; text-align:right; }
   .divider{ height:12px; }
+
+  /* Metrics dropdown styling */
+  .metric-section{ background:#121621; border:1px solid #242b3b; border-radius:14px; padding:10px 12px; }
+  .m-title{ color:#e8ecff; font-weight:800; letter-spacing:.02em; margin:4px 0 10px 0; }
+  .m-row{ display:flex; justify-content:space-between; align-items:center; padding:8px 8px; border-radius:10px; }
+  .m-row + .m-row{ margin-top:6px; }
+  .m-label{ color:#c9d3f2; font-size:16px; }
+  .m-right{ display:flex; align-items:center; gap:8px; }
+  .m-raw{ color:#98a3c7; font-size:12px; }
+  .m-badge{ min-width:40px; text-align:center; padding:2px 10px; border-radius:8px; font-weight:800; font-size:18px; color:#0b0d12; border:1px solid rgba(0,0,0,.15); }
+  .metrics-grid{ display:grid; grid-template-columns:1fr; gap:12px; }
+  @media (min-width: 720px){
+    .metrics-grid{ grid-template-columns:repeat(3, 1fr); }
+  }
 </style>
 """, unsafe_allow_html=True)
 
@@ -66,6 +81,8 @@ FEATURES = [
     'Accurate crosses, %','Dribbles per 90','Successful dribbles, %','Head goals per 90','Key passes per 90',
     'Touches in box per 90','Progressive runs per 90','Accelerations per 90','Passes per 90','Accurate passes, %',
     'xA per 90','Passes to penalty area per 90','Accurate passes to penalty area, %','Deep completions per 90','Smart passes per 90',
+    # ↓ Added to support the dropdown sections you requested
+    'Offensive duels per 90','Offensive duels won, %'
 ]
 ROLES = {
     'Goal Threat CF': {'metrics':{'Non-penalty goals per 90':3,'Shots per 90':1.5,'xG per 90':3,'Touches in box per 90':1,'Shots on target, %':0.5}},
@@ -211,10 +228,9 @@ POS_COLORS={
 def chip_color(p:str)->str: return POS_COLORS.get(p.strip().upper(),"#2d3550")
 
 # ----------------- Flags (Twemoji SVG for ALL countries) -----------------
-# Map many common country names -> ISO alpha-2 (lowercase)
 COUNTRY_TO_CC = {
     "united kingdom":"gb","great britain":"gb","northern ireland":"gb",
-    "england":"eng","scotland":"sct","wales":"wls",  # UK subdivisions (handled specially)
+    "england":"eng","scotland":"sct","wales":"wls",
     "ireland":"ie","republic of ireland":"ie",
     "spain":"es","france":"fr","germany":"de","italy":"it","portugal":"pt","netherlands":"nl","belgium":"be",
     "austria":"at","switzerland":"ch","denmark":"dk","sweden":"se","norway":"no","finland":"fi","iceland":"is",
@@ -229,34 +245,24 @@ COUNTRY_TO_CC = {
     "new zealand":"nz","latvia":"lv","lithuania":"lt","estonia":"ee","moldova":"md","north macedonia":"mk",
     "malta":"mt","cyprus":"cy","luxembourg":"lu","andorra":"ad","monaco":"mc","san marino":"sm",
 }
-
-# Twemoji codes for UK subdivisions (not standard ISO flags)
 TWEMOJI_SPECIAL = {
-    "eng": "1f3f4-e0067-e0062-e0065-e006e-e0067-e007f",                     # England
-    "sct": "1f3f4-e0067-e0062-e0073-e0063-e006f-e0074-e007f",               # Scotland
-    "wls": "1f3f4-e0067-e0062-e0077-e0061-e006c-e0065-e007f",               # Wales
+    "eng": "1f3f4-e0067-e0062-e0065-e006e-e0067-e007f",
+    "sct": "1f3f4-e0067-e0062-e0073-e0063-e006f-e0074-e007f",
+    "wls": "1f3f4-e0067-e0062-e0077-e0061-e006c-e0065-e007f",
 }
-
 def country_norm(s: str) -> str:
     if not s: return ""
     return unicodedata.normalize("NFKD", s).encode("ascii","ignore").decode("ascii").strip().lower()
-
 def cc_to_twemoji_code(cc: str) -> str | None:
-    """
-    Convert ISO alpha-2 (e.g., 'fr') to Twemoji regional-indicator hex sequence,
-    e.g., 'fr' -> '1f1eb-1f1f7'
-    """
-    if not cc or len(cc) != 2: 
+    if not cc or len(cc) != 2:
         return None
     a, b = cc.upper()
     cp1 = 0x1F1E6 + (ord(a) - ord('A'))
     cp2 = 0x1F1E6 + (ord(b) - ord('A'))
     return f"{cp1:04x}-{cp2:04x}"
-
 def flag_chip_html(country_name: str, age: int, contract_year: int) -> str:
     n = country_norm(country_name)
     cc = COUNTRY_TO_CC.get(n, "")
-    # special UK subdivision svg
     if cc in TWEMOJI_SPECIAL:
         code = TWEMOJI_SPECIAL[cc]
         src = f"https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/svg/{code}.svg"
@@ -267,14 +273,41 @@ def flag_chip_html(country_name: str, age: int, contract_year: int) -> str:
             src = f"https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/svg/{code}.svg"
             flag_html = f"<span class='flagchip'><img src='{src}' alt='{country_name}'></span>"
         else:
-            # unknown → just blank chip
             flag_html = "<span class='chip'>—</span>"
-
     age_chip = f"<span class='chip'>{age}y.o.</span>"
     yr = f"{contract_year}" if contract_year > 0 else "—"
     contract_chip = f"<span class='chip'>{yr}</span>"
     return f"<div class='row'>{flag_html}{age_chip}{contract_chip}</div>"
 
+# ---------- Helpers for dropdown metrics ----------
+def pct_of_row(row: pd.Series, metric: str) -> float:
+    col = f"{metric} Percentile"
+    v = float(row[col]) if col in row and not pd.isna(row[col]) else 0.0
+    return max(0.0, min(100.0, v))
+
+def val_of_row(row: pd.Series, metric: str) -> tuple[float, str]:
+    """Return (raw_value, pretty_string). Percent metrics get %; per 90 rounded to 2dp."""
+    v = float(row.get(metric, np.nan))
+    if np.isnan(v):
+        return (np.nan, "—")
+    if "%" in metric:
+        return (v, f"{v:.0f}%")
+    else:
+        # per 90 and other rates
+        return (v, f"{v:.2f}")
+
+def metrics_section_html(title: str, items: list[tuple[str, float, str]]) -> str:
+    rows = []
+    for lab, pct, raw_txt in items:
+        pct_i = int(round(pct))
+        rows.append(
+            f"<div class='m-row'>"
+            f"  <div class='m-label'>{lab}</div>"
+            f"  <div class='m-right'><span class='m-raw'>{raw_txt}</span>"
+            f"  <span class='m-badge' style='background:{rating_color(pct_i)}'>{pct_i}</span></div>"
+            f"</div>"
+        )
+    return f"<div class='metric-section'><div class='m-title'>{title}</div>{''.join(rows)}</div>"
 
 # ----------------- RENDER -----------------
 for idx,row in ranked.iterrows():
@@ -328,6 +361,62 @@ for idx,row in ranked.iterrows():
     </div>
     <div class='divider'></div>
     """, unsafe_allow_html=True)
+
+    # === dropdown with individual metrics ===
+    with st.expander("▼ Show individual metrics"):
+        # Build the three sections using your titles & mappings
+        ATTACKING = []
+        for lab, met in [
+            ("Crosses","Crosses per 90"),
+            ("Crossing Accuracy %","Accurate crosses, %"),
+            ("Goals: Non-Penalty","Non-penalty goals per 90"),
+            ("xG","xG per 90"),
+            ("Conversion Rate %","Goal conversion, %"),
+            ("Header Goals","Head goals per 90"),
+            ("Expected Assists","xA per 90"),
+            ("Offensive Duels","Offensive duels per 90"),
+            ("Offensive Duel Success %","Offensive duels won, %"),
+            ("Progressive Runs","Progressive runs per 90"),
+            ("Shots","Shots per 90"),
+            ("Shooting Accuracy %","Shots on target, %"),
+            ("Touches in Opposition Box","Touches in box per 90"),
+        ]:
+            ATTACKING.append((lab, float(np.nan_to_num(pct_of_row(row, met), nan=0.0)), val_of_row(row, met)[1]))
+
+        DEFENSIVE = []
+        for lab, met in [
+            ("Aerial Duels","Aerial duels per 90"),
+            ("Aerial Duel Success %","Aerial duels won, %"),
+            ("Defensive Duels","Defensive duels per 90"),
+            ("Defensive Duel Success %","Defensive duels won, %"),
+            ("PAdj. Interceptions","PAdj Interceptions"),
+        ]:
+            DEFENSIVE.append((lab, float(np.nan_to_num(pct_of_row(row, met), nan=0.0)), val_of_row(row, met)[1]))
+
+        POSSESSION = []
+        for lab, met in [
+            ("Deep Completions","Deep completions per 90"),
+            ("Dribbles","Dribbles per 90"),
+            ("Dribbling Success %","Successful dribbles, %"),
+            ("Key Passes","Key passes per 90"),
+            ("Passes","Passes per 90"),
+            ("Passing Accuracy %","Accurate passes, %"),
+            ("Passes to Penalty Area","Passes to penalty area per 90"),
+            ("Passes to Penalty Area %","Accurate passes to penalty area, %"),
+            ("Smart Passes","Smart passes per 90"),
+        ]:
+            POSSESSION.append((lab, float(np.nan_to_num(pct_of_row(row, met), nan=0.0)), val_of_row(row, met)[1]))
+
+        # lay them out (responsive grid: 3 columns on wide screens)
+        col_html = (
+            "<div class='metrics-grid'>"
+            f"{metrics_section_html('ATTACKING', ATTACKING)}"
+            f"{metrics_section_html('DEFENSIVE', DEFENSIVE)}"
+            f"{metrics_section_html('POSSESSION', POSSESSION)}"
+            "</div>"
+        )
+        st.markdown(col_html, unsafe_allow_html=True)
+
 
 
 
