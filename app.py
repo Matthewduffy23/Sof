@@ -1,4 +1,4 @@
-# app_top20_tiles.py — Top 20 Tiles (CF) with player dropdown profiles
+# app_top20_tiles.py — Top 20 Tiles (CF) with FIFA-style profile rows (no right pill)
 # Requirements: streamlit, pandas, numpy
 
 import io, re, math, unicodedata
@@ -29,7 +29,6 @@ st.markdown("""
   }
   .avatar{ width:96px; height:96px; border-radius:12px; background:#0b0d12 url('https://i.redd.it/43axcjdu59nd1.jpeg') center/cover no-repeat; border:1px solid #2a3145; }
   .leftcol{ display:flex; flex-direction:column; align-items:center; gap:8px; }
-  .meta3{ display:grid; grid-template-columns: repeat(3, auto); gap:8px; align-items:center; }
   .name{ font-weight:800; font-size:24px; color:#e8ecff; margin-bottom:6px; }
   .sub{ color:#a8b3cf; font-size:15px; }
   .pill{ padding:1.5px 5px; border-radius:9px; font-weight:800; font-size:14px; color:#0b0d12; display:inline-block; min-width:42px; text-align:center; }
@@ -42,17 +41,28 @@ st.markdown("""
   .rank{ color:#94a0c6; font-weight:800; font-size:18px; text-align:right; }
   .divider{ height:12px; }
 
-  /* Custom tweaks: position row + team line spacing */
-  .row.position-row { margin-top: 6px; }
+  /* ====== Profile (dropdown) — FIFA-style rows ====== */
+  .metrics { width:100%; display:flex; flex-direction:column; gap:12px; padding:10px 6px 4px 6px; }
+  .metric-fifa { display:grid; grid-template-columns: 56px 1fr 240px; gap:12px; align-items:center; }
+  .metric-fifa .lab { color:#d4dcff; font-size:18px; letter-spacing:.2px; }
+  /* dashed lane behind */
+  .dashbar { position:relative; height:10px; border-radius:8px; background:
+      repeating-linear-gradient(to right, #2e3447 0 14px, transparent 14px 22px);
+      border:1px solid #2b344d; overflow:hidden; }
+  /* green dashed fill overlaid up to width% */
+  .dashfill { position:absolute; left:0; top:0; height:100%; background:
+      repeating-linear-gradient(to right, #3bc16a 0 14px, transparent 14px 22px); }
+  /* caret marker */
+  .caret { position:absolute; top:-7px; width:0; height:0; border-left:6px solid transparent;
+           border-right:6px solid transparent; border-bottom:10px solid #7BFF7B; transform:translateX(-50%); }
 
-  /* ====== Profile (dropdown) styles ====== */
-  .metrics { width:100%; display:flex; flex-direction:column; gap:8px; }
-  .metric { display:grid; grid-template-columns: 1fr 140px 64px; gap:10px; align-items:center; }
-  .metric .lab { color:#cfd6ef; font-size:14px; }
-  .metric .bar { height:8px; border-radius:999px; background:#1b2130; border:1px solid #2b344d; position:relative; overflow:hidden; }
-  .metric .fill { height:100%; border-radius:999px; }
-  .metric .val { color:#98a4c7; font-size:13px; text-align:right; }
-  .section-title { color:#e8ecff; font-weight:700; margin:2px 0 8px; }
+  /* Left pill in the profile rows */
+  .leftpill { padding:2px 8px; border-radius:8px; font-weight:900; font-size:18px; color:#0b0d12; text-align:center; }
+
+  /* Streamlit expander & tabs tone-up on dark */
+  .streamlit-expanderHeader { font-weight:700; color:#e8ecff; }
+  .stTabs [data-baseweb="tab"] { color:#a8b3cf; }
+  .stTabs [aria-selected="true"] { color:#e8ecff !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -197,7 +207,7 @@ df_f["Score_TM_raw"]=role_score(df_f,ROLES["Target Man CF"]["metrics"])
 df_f["Score_ALL_raw"]=role_score(df_f,ROLES["All in"]["metrics"])
 # league-weighted
 ls=df_f["League Strength"].astype(float)
-beta = float(beta)
+beta=float(beta)
 df_f["Score_GT"]=(1-beta)*df_f["Score_GT_raw"]+beta*ls
 df_f["Score_LU"]=(1-beta)*df_f["Score_LU_raw"]+beta*ls
 df_f["Score_TM"]=(1-beta)*df_f["Score_TM_raw"]+beta*ls
@@ -213,19 +223,8 @@ def rating_color(v:float)->str:
     for i in range(len(PALETTE)-1):
         x0,c0=PALETTE[i]; x1,c1=PALETTE[i+1]
         if v<=x1:
-            t=0 if x1==x0 else (v-x0)/(x1-x1 if x1==x0 else (x1-x0))
-            # fix accidental divide-by-zero from above one-liner
-    return ""
-
-# (Fix rating_color properly)
-def rating_color(v:float)->str:
-    v=max(0.0,min(100.0,float(v)))
-    for i in range(len(PALETTE)-1):
-        x0,c0=PALETTE[i]; x1,c1=PALETTE[i+1]
-        if v<=x1:
             t=0 if x1==x0 else (v-x0)/(x1-x0)
-            r,g,b=_lerp(c0,c1,t)
-            return f"rgb({r},{g},{b})"
+            r,g,b=_lerp(c0,c1,t); return f"rgb({r},{g},{b})"
     r,g,b=PALETTE[-1][1]; return f"rgb({r},{g},{b})"
 
 POS_COLORS={
@@ -235,11 +234,10 @@ POS_COLORS={
 }
 def chip_color(p:str)->str: return POS_COLORS.get(p.strip().upper(),"#2d3550")
 
-# ----------------- Flags (Twemoji SVG for ALL countries) -----------------
+# ----------------- Flags (Twemoji) -----------------
 COUNTRY_TO_CC = {
     "united kingdom":"gb","great britain":"gb","northern ireland":"gb",
-    "england":"eng","scotland":"sct","wales":"wls",
-    "ireland":"ie","republic of ireland":"ie",
+    "england":"eng","scotland":"sct","wales":"wls","ireland":"ie","republic of ireland":"ie",
     "spain":"es","france":"fr","germany":"de","italy":"it","portugal":"pt","netherlands":"nl","belgium":"be",
     "austria":"at","switzerland":"ch","denmark":"dk","sweden":"se","norway":"no","finland":"fi","iceland":"is",
     "poland":"pl","czech republic":"cz","czechia":"cz","slovakia":"sk","slovenia":"si","croatia":"hr","serbia":"rs",
@@ -262,8 +260,7 @@ def country_norm(s: str) -> str:
     if not s: return ""
     return unicodedata.normalize("NFKD", s).encode("ascii","ignore").decode("ascii").strip().lower()
 def cc_to_twemoji_code(cc: str) -> str | None:
-    if not cc or len(cc) != 2: 
-        return None
+    if not cc or len(cc) != 2: return None
     a, b = cc.upper()
     cp1 = 0x1F1E6 + (ord(a) - ord('A'))
     cp2 = 0x1F1E6 + (ord(b) - ord('A'))
@@ -287,59 +284,52 @@ def flag_chip_html(country_name: str, age: int, contract_year: int) -> str:
     contract_chip = f"<span class='chip'>{yr}</span>"
     return f"<div class='row'>{flag_html}{age_chip}{contract_chip}</div>"
 
-# ======= Profile helpers (percentiles + values per row) =======
+# ======= Profile helpers (percentiles per row) =======
 def pct_of_row(row, metric: str) -> float:
     return float(row.get(f"{metric} Percentile", 0.0))
-def val_of_row(row, metric: str) -> float:
-    v = row.get(metric, 0)
-    try: return float(v)
-    except Exception: return 0.0
-def render_section(items: list[tuple[str, float, float]]) -> str:
+
+def make_row(label: str, pct: float) -> str:
+    pct = max(0.0, min(100.0, float(pct)))
+    color = rating_color(pct)
+    return f"""
+      <div class="metric-fifa">
+        <div class="leftpill" style="background:{color}">{int(round(pct))}</div>
+        <div class="lab">{label}</div>
+        <div class="dashbar">
+          <div class="dashfill" style="width:{pct:.0f}%;"></div>
+          <div class="caret" style="left:{pct:.0f}%;"></div>
+        </div>
+      </div>
+    """
+
+def render_section(labels_and_metrics, row) -> str:
     rows = []
-    for lab, pct, raw in items:
-        rows.append(
-            f"""
-            <div class="metric">
-              <div class="lab">{lab}</div>
-              <div class="bar"><div class="fill" style="width:{pct:.0f}%; background:{rating_color(pct)}"></div></div>
-              <div class="val">{raw:.2f}</div>
-            </div>
-            """
-        )
-    return f"""<div class="metrics">{''.join(rows)}</div>"""
+    for lab, met in labels_and_metrics:
+        rows.append(make_row(lab, pct_of_row(row, met)))
+    return f"<div class='metrics'>{''.join(rows)}</div>"
+
 ATTACKING_SPEC = [
-    ("Crosses","Crosses per 90"),
-    ("Crossing Accuracy %","Accurate crosses, %"),
-    ("Goals: Non-Penalty","Non-penalty goals per 90"),
+    ("Crossing","Crosses per 90"),
+    ("Finishing","Goal conversion, %"),
+    ("Heading accuracy","Aerial duels won, %"),
+    ("Short passing","Accurate passes, %"),
+    ("Volleys","Shots on target, %"),
     ("xG","xG per 90"),
-    ("Conversion Rate %","Goal conversion, %"),
-    ("Header Goals","Head goals per 90"),
-    ("Expected Assists","xA per 90"),
-    ("Progressive Runs","Progressive runs per 90"),
+    ("Non-penalty goals","Non-penalty goals per 90"),
     ("Shots","Shots per 90"),
-    ("Shooting Accuracy %","Shots on target, %"),
-    ("Touches in Opposition Box","Touches in box per 90"),
+    ("Touches in box","Touches in box per 90"),
 ]
-DEFENSIVE_SPEC = [
-    ("Aerial Duels","Aerial duels per 90"),
-    ("Aerial Duel Success %","Aerial duels won, %"),
-    ("Defensive Duels","Defensive duels per 90"),
-    ("Defensive Duel Success %","Defensive duels won, %"),
-    ("PAdj. Interceptions","PAdj Interceptions"),
-]
-POSSESSION_SPEC = [
-    ("Deep Completions","Deep completions per 90"),
-    ("Dribbles","Dribbles per 90"),
-    ("Dribbling Success %","Successful dribbles, %"),
-    ("Key Passes","Key passes per 90"),
-    ("Passes","Passes per 90"),
-    ("Passing Accuracy %","Accurate passes, %"),
-    ("Passes to Penalty Area","Passes to penalty area per 90"),
-    ("Passes to Penalty Area %","Accurate passes to penalty area, %"),
-    ("Smart Passes","Smart passes per 90"),
+SKILL_SPEC = [
+    ("Dribbling","Successful dribbles, %"),
+    ("Curve","Accurate crosses, %"),
+    ("FK Accuracy","Accurate crosses, %"),
+    ("Long passing","Passes to penalty area per 90"),
+    ("Ball control","Deep completions per 90"),
 ]
 
 # ----------------- RENDER -----------------
+ranked=df_f.sort_values("Score_ALL",ascending=False).head(int(top_n)).copy().reset_index(drop=True)
+
 for idx,row in ranked.iterrows():
     rank = idx+1
     player = str(row.get("Player","")) or ""
@@ -384,7 +374,7 @@ for idx,row in ranked.iterrows():
             <span class='pill' style='{tm_style}'>{tm_i}</span>
             <span class='sub'>Target Man CF</span>
           </div>
-          <div class='row position-row'>{chips_html}</div>
+          <div class='row'>{chips_html}</div>
           <div class='teamline'>{team}</div>
         </div>
         <div class='rank'>#{rank}</div>
@@ -393,22 +383,17 @@ for idx,row in ranked.iterrows():
     <div class='divider'></div>
     """, unsafe_allow_html=True)
 
-    # ---- Per-player profile (dropdown with tabs) ----
-    attacking = [(lab, pct_of_row(row, met), val_of_row(row, met)) for lab, met in ATTACKING_SPEC]
-    defensive = [(lab, pct_of_row(row, met), val_of_row(row, met)) for lab, met in DEFENSIVE_SPEC]
-    possession = [(lab, pct_of_row(row, met), val_of_row(row, met)) for lab, met in POSSESSION_SPEC]
-
+    # ---- Per-player profile (dropdown) FIFA-style ----
     with st.expander(f"📊 Profile: {player}", expanded=False):
-        tabs = st.tabs(["Attacking", "Defensive", "Possession"])
+        tabs = st.tabs(["Attacking", "Skill"])
         with tabs[0]:
-            st.markdown("<div class='section-title'>Attacking</div>", unsafe_allow_html=True)
-            st.markdown(render_section(attacking), unsafe_allow_html=True)
+            st.markdown("<div class='metrics'></div>", unsafe_allow_html=True)
+            html = render_section(ATTACKING_SPEC, row)
+            st.markdown(html, unsafe_allow_html=True)
         with tabs[1]:
-            st.markdown("<div class='section-title'>Defensive</div>", unsafe_allow_html=True)
-            st.markdown(render_section(defensive), unsafe_allow_html=True)
-        with tabs[2]:
-            st.markdown("<div class='section-title'>Possession</div>", unsafe_allow_html=True)
-            st.markdown(render_section(possession), unsafe_allow_html=True)
+            html = render_section(SKill_SPEC := SKILL_SPEC, row)
+            st.markdown(html, unsafe_allow_html=True)
+
 
 
 
