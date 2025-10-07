@@ -792,7 +792,6 @@ for idx,row in ranked.iterrows():
 
         POSSESSION = []
         for lab, met in [
-            ("Deep Completions","Deep completions per 90"),
             ("Dribbles","Dribbles per 90"),
             ("Dribbling Success %","Successful dribbles, %"),
             ("Key Passes","Key passes per 90"),
