@@ -1,4 +1,4 @@
-# app_top20_tiles.py — Top 20 Tiles (CF) + FIFA-style profile rows (no right pill)
+# app_top20_tiles.py — Top 20 Tiles (CF) with fixed image, colored role tags, proper flags (incl. ENG/SCT/WLS)
 # Requirements: streamlit, pandas, numpy
 
 import io, re, math, unicodedata
@@ -29,40 +29,18 @@ st.markdown("""
   }
   .avatar{ width:96px; height:96px; border-radius:12px; background:#0b0d12 url('https://i.redd.it/43axcjdu59nd1.jpeg') center/cover no-repeat; border:1px solid #2a3145; }
   .leftcol{ display:flex; flex-direction:column; align-items:center; gap:8px; }
-  .name{ font-weight:800; font-size:24px; color:#e8ecff; margin-bottom:6px; }
+  .meta3{ display:grid; grid-template-columns: repeat(3, auto); gap:8px; align-items:center; }
+  .name{ font-weight:800; font-size:22px; color:#e8ecff; margin-bottom:6px; }
   .sub{ color:#a8b3cf; font-size:15px; }
-  .pill{ padding:1.5px 5px; border-radius:9px; font-weight:800; font-size:14px; color:#0b0d12; display:inline-block; min-width:42px; text-align:center; }
+  .pill{ padding:2px 10px; border-radius:9px; font-weight:800; font-size:18px; color:#0b0d12; display:inline-block; min-width:42px; text-align:center; }
   .row{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:4px 0; }
   .chip{ background:var(--soft); color:#cbd5f5; border:1px solid #2d3550; padding:3px 10px; border-radius:10px; font-size:13px; line-height:18px; }
   .flagchip{ display:inline-flex; align-items:center; gap:6px; background:var(--soft); color:#cbd5f5; border:1px solid #2d3550; padding:2px 8px; border-radius:10px; font-size:13px; line-height:18px; height:22px;}
   .flagchip img{ width:18px; height:14px; border-radius:2px; display:block; }
-  .pos{ color:#eaf0ff; font-weight:700; padding:3px 8px; border-radius:10px; font-size:12px; border:1px solid rgba(255,255,255,.08); }
-  .teamline{ color:#e6ebff; font-size:15px; font-weight:400; margin-top:8px; }
+  .pos{ color:#eaf0ff; font-weight:700; padding:4px 10px; border-radius:10px; font-size:12px; border:1px solid rgba(255,255,255,.08); }
+  .teamline{ color:#e6ebff; font-size:15px; font-weight:400; margin-top:2px; }
   .rank{ color:#94a0c6; font-weight:800; font-size:18px; text-align:right; }
   .divider{ height:12px; }
-
-  /* ====== Profile (dropdown) — FIFA-style rows ====== */
-  .metrics-card { background:#141821; border:1px solid #252b3a; border-radius:14px; padding:14px; }
-  .section-h { color:#e8ecff; font-weight:800; font-size:18px; margin:8px 0 12px; }
-  .metrics { width:100%; display:flex; flex-direction:column; gap:12px; }
-  .metric-fifa { display:grid; grid-template-columns: 56px 1fr 240px; gap:12px; align-items:center; }
-  .metric-fifa .lab { color:#d4dcff; font-size:18px; letter-spacing:.2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-
-  /* dashed lane & fill */
-  .dashbar { position:relative; height:10px; border-radius:8px; background:
-      repeating-linear-gradient(to right, #2e3447 0 14px, transparent 14px 22px);
-      border:1px solid #2b344d; overflow:hidden; }
-  .dashfill { position:absolute; left:0; top:0; height:100%;
-      background: repeating-linear-gradient(to right, #6dde8f 0 14px, transparent 14px 22px); }
-  .caret { position:absolute; top:-7px; width:0; height:0; border-left:6px solid transparent;
-           border-right:6px solid transparent; border-bottom:10px solid #7BFF7B; transform:translateX(-50%); }
-
-  /* Left pill in the profile rows */
-  .leftpill { padding:2px 8px; border-radius:8px; font-weight:900; font-size:18px; color:#0b0d12; text-align:center; min-width:48px; }
-
-  .streamlit-expanderHeader { font-weight:700; color:#e8ecff; }
-  .stTabs [data-baseweb="tab"] { color:#a8b3cf; }
-  .stTabs [aria-selected="true"] { color:#e8ecff !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -82,16 +60,13 @@ INCLUDED_LEAGUES = [
     'USA 2.','Uruguay 1.','Uzbekistan 1.','Venezuela 1.','Wales 1.'
 ]
 
-# Metrics we may use (superset). If a column isn't in your CSV, it's skipped safely.
 FEATURES = [
     'Defensive duels per 90','Defensive duels won, %','Aerial duels per 90','Aerial duels won, %','PAdj Interceptions',
     'Non-penalty goals per 90','xG per 90','Shots per 90','Shots on target, %','Goal conversion, %','Crosses per 90',
     'Accurate crosses, %','Dribbles per 90','Successful dribbles, %','Head goals per 90','Key passes per 90',
     'Touches in box per 90','Progressive runs per 90','Accelerations per 90','Passes per 90','Accurate passes, %',
     'xA per 90','Passes to penalty area per 90','Accurate passes to penalty area, %','Deep completions per 90','Smart passes per 90',
-    'Offensive duels per 90','Offensive duels won, %'
 ]
-
 ROLES = {
     'Goal Threat CF': {'metrics':{'Non-penalty goals per 90':3,'Shots per 90':1.5,'xG per 90':3,'Touches in box per 90':1,'Shots on target, %':0.5}},
     'Link-Up CF':     {'metrics':{'Passes per 90':2,'Passes to penalty area per 90':1.5,'Deep completions per 90':1,'Smart passes per 90':1.5,
@@ -175,6 +150,8 @@ with st.sidebar:
 # ----------------- VALIDATION -----------------
 missing=[c for c in REQUIRED_BASE if c not in df.columns]
 if missing: st.error(f"Dataset missing required base columns: {missing}"); st.stop()
+missing_feats=[c for c in FEATURES if c not in df.columns]
+if missing_feats: st.error(f"Dataset missing required feature columns: {missing_feats}"); st.stop()
 
 # ----------------- FILTER POOL -----------------
 df_f=df[df["League"].isin(leagues_sel)].copy()
@@ -182,19 +159,15 @@ df_f=df_f[df_f["Position"].astype(str).str.upper().str.startswith("CF")]
 df_f=df_f[df_f["Minutes played"].between(min_minutes,max_minutes)]
 df_f=df_f[df_f["Age"].between(min_age,max_age)]
 if apply_contract: df_f=df_f[df_f["Contract expires"].dt.year<=cutoff_year]
-for c in FEATURES:
-    if c in df_f.columns:
-        df_f[c]=pd.to_numeric(df_f[c],errors="coerce")
-# keep rows that have at least one metric present
-metric_cols = [c for c in FEATURES if c in df_f.columns]
-df_f = df_f.dropna(subset=metric_cols, how="all")
+for c in FEATURES: df_f[c]=pd.to_numeric(df_f[c],errors="coerce")
+df_f=df_f.dropna(subset=FEATURES)
 df_f["League Strength"]=df_f["League"].map(LEAGUE_STRENGTHS).fillna(50.0)
 df_f=df_f[(df_f["League Strength"]>=float(min_strength))&(df_f["League Strength"]<=float(max_strength))]
 df_f=df_f[(df_f["Market value"]>=min_value)&(df_f["Market value"]<=max_value)]
 if df_f.empty: st.warning("No players after filters. Loosen filters."); st.stop()
 
 # ----------------- Percentiles -----------------
-for feat in metric_cols:
+for feat in FEATURES:
     df_f[f"{feat} Percentile"]=df_f.groupby("League")[feat].transform(lambda x: x.rank(pct=True)*100.0)
 
 def role_score(df_in:pd.DataFrame,metrics:dict)->pd.Series:
@@ -202,8 +175,7 @@ def role_score(df_in:pd.DataFrame,metrics:dict)->pd.Series:
     wsum=np.zeros(len(df_in))
     for m,w in metrics.items():
         col=f"{m} Percentile"
-        if col in df_in.columns:
-            wsum+=df_in[col].fillna(0).values*w
+        if col in df_in.columns: wsum+=df_in[col].values*w
     return wsum/total_w
 
 # raw scores
@@ -213,7 +185,6 @@ df_f["Score_TM_raw"]=role_score(df_f,ROLES["Target Man CF"]["metrics"])
 df_f["Score_ALL_raw"]=role_score(df_f,ROLES["All in"]["metrics"])
 # league-weighted
 ls=df_f["League Strength"].astype(float)
-beta=float(beta)
 df_f["Score_GT"]=(1-beta)*df_f["Score_GT_raw"]+beta*ls
 df_f["Score_LU"]=(1-beta)*df_f["Score_LU_raw"]+beta*ls
 df_f["Score_TM"]=(1-beta)*df_f["Score_TM_raw"]+beta*ls
@@ -229,8 +200,7 @@ def rating_color(v:float)->str:
     for i in range(len(PALETTE)-1):
         x0,c0=PALETTE[i]; x1,c1=PALETTE[i+1]
         if v<=x1:
-            t=0 if x1==x0 else (v-x0)/(x1-x0)
-            r,g,b=_lerp(c0,c1,t); return f"rgb({r},{g},{b})"
+            t=0 if x1==x0 else (v-x0)/(x1-x0); r,g,b=_lerp(c0,c1,t); return f"rgb({r},{g},{b})"
     r,g,b=PALETTE[-1][1]; return f"rgb({r},{g},{b})"
 
 POS_COLORS={
@@ -240,10 +210,12 @@ POS_COLORS={
 }
 def chip_color(p:str)->str: return POS_COLORS.get(p.strip().upper(),"#2d3550")
 
-# ----------------- Flags (Twemoji) -----------------
+# ----------------- Flags (Twemoji SVG for ALL countries) -----------------
+# Map many common country names -> ISO alpha-2 (lowercase)
 COUNTRY_TO_CC = {
     "united kingdom":"gb","great britain":"gb","northern ireland":"gb",
-    "england":"eng","scotland":"sct","wales":"wls","ireland":"ie","republic of ireland":"ie",
+    "england":"eng","scotland":"sct","wales":"wls",  # UK subdivisions (handled specially)
+    "ireland":"ie","republic of ireland":"ie",
     "spain":"es","france":"fr","germany":"de","italy":"it","portugal":"pt","netherlands":"nl","belgium":"be",
     "austria":"at","switzerland":"ch","denmark":"dk","sweden":"se","norway":"no","finland":"fi","iceland":"is",
     "poland":"pl","czech republic":"cz","czechia":"cz","slovakia":"sk","slovenia":"si","croatia":"hr","serbia":"rs",
@@ -257,23 +229,34 @@ COUNTRY_TO_CC = {
     "new zealand":"nz","latvia":"lv","lithuania":"lt","estonia":"ee","moldova":"md","north macedonia":"mk",
     "malta":"mt","cyprus":"cy","luxembourg":"lu","andorra":"ad","monaco":"mc","san marino":"sm",
 }
+
+# Twemoji codes for UK subdivisions (not standard ISO flags)
 TWEMOJI_SPECIAL = {
-    "eng": "1f3f4-e0067-e0062-e0065-e006e-e0067-e007f",
-    "sct": "1f3f4-e0067-e0062-e0073-e0063-e006f-e0074-e007f",
-    "wls": "1f3f4-e0067-e0062-e0077-e0061-e006c-e007f",
+    "eng": "1f3f4-e0067-e0062-e0065-e006e-e0067-e007f",                     # England
+    "sct": "1f3f4-e0067-e0062-e0073-e0063-e006f-e0074-e007f",               # Scotland
+    "wls": "1f3f4-e0067-e0062-e0077-e0061-e006c-e0065-e007f",               # Wales
 }
+
 def country_norm(s: str) -> str:
     if not s: return ""
     return unicodedata.normalize("NFKD", s).encode("ascii","ignore").decode("ascii").strip().lower()
+
 def cc_to_twemoji_code(cc: str) -> str | None:
-    if not cc or len(cc) != 2: return None
+    """
+    Convert ISO alpha-2 (e.g., 'fr') to Twemoji regional-indicator hex sequence,
+    e.g., 'fr' -> '1f1eb-1f1f7'
+    """
+    if not cc or len(cc) != 2: 
+        return None
     a, b = cc.upper()
     cp1 = 0x1F1E6 + (ord(a) - ord('A'))
     cp2 = 0x1F1E6 + (ord(b) - ord('A'))
     return f"{cp1:04x}-{cp2:04x}"
+
 def flag_chip_html(country_name: str, age: int, contract_year: int) -> str:
     n = country_norm(country_name)
     cc = COUNTRY_TO_CC.get(n, "")
+    # special UK subdivision svg
     if cc in TWEMOJI_SPECIAL:
         code = TWEMOJI_SPECIAL[cc]
         src = f"https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/svg/{code}.svg"
@@ -284,77 +267,16 @@ def flag_chip_html(country_name: str, age: int, contract_year: int) -> str:
             src = f"https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/svg/{code}.svg"
             flag_html = f"<span class='flagchip'><img src='{src}' alt='{country_name}'></span>"
         else:
+            # unknown → just blank chip
             flag_html = "<span class='chip'>—</span>"
+
     age_chip = f"<span class='chip'>{age}y.o.</span>"
     yr = f"{contract_year}" if contract_year > 0 else "—"
     contract_chip = f"<span class='chip'>{yr}</span>"
     return f"<div class='row'>{flag_html}{age_chip}{contract_chip}</div>"
 
-# ======= Profile helpers =======
-def pct_of_row(row: pd.Series, metric: str) -> float:
-    """Return 0..100 percentile for a metric; safe even if missing."""
-    col = f"{metric} Percentile"
-    v = row.get(col, np.nan)
-    return float(v) if pd.notna(v) else 0.0
-
-def make_row(label: str, pct: float) -> str:
-    pct = max(0.0, min(100.0, float(pct)))
-    color = rating_color(pct)
-    return f"""
-      <div class="metric-fifa">
-        <div class="leftpill" style="background:{color}">{int(round(pct))}</div>
-        <div class="lab">{label}</div>
-        <div class="dashbar">
-          <div class="dashfill" style="width:{pct:.0f}%;"></div>
-          <div class="caret" style="left:{pct:.0f}%;"></div>
-        </div>
-      </div>
-    """
-
-def render_section(items, row) -> str:
-    rows = []
-    for lab, met in items:
-        rows.append(make_row(lab, pct_of_row(row, met)))
-    return f"<div class='metrics'>{''.join(rows)}</div>"
-
-# === sections (exact titles & metrics you requested) ===
-ATTACKING_SPEC = [
-    ("Crosses","Crosses per 90"),
-    ("Crossing Accuracy %","Accurate crosses, %"),
-    ("Goals: Non-Penalty","Non-penalty goals per 90"),
-    ("xG","xG per 90"),
-    ("Conversion Rate %","Goal conversion, %"),
-    ("Header Goals","Head goals per 90"),
-    ("Expected Assists","xA per 90"),
-    ("Offensive Duels","Offensive duels per 90"),
-    ("Offensive Duel Success %","Offensive duels won, %"),
-    ("Progressive Runs","Progressive runs per 90"),
-    ("Shots","Shots per 90"),
-    ("Shooting Accuracy %","Shots on target, %"),
-    ("Touches in Opposition Box","Touches in box per 90"),
-]
-DEFENSIVE_SPEC = [
-    ("Aerial Duels","Aerial duels per 90"),
-    ("Aerial Duel Success %","Aerial duels won, %"),
-    ("Defensive Duels","Defensive duels per 90"),
-    ("Defensive Duel Success %","Defensive duels won, %"),
-    ("PAdj. Interceptions","PAdj Interceptions"),
-]
-POSSESSION_SPEC = [
-    ("Deep Completions","Deep completions per 90"),
-    ("Dribbles","Dribbles per 90"),
-    ("Dribbling Success %","Successful dribbles, %"),
-    ("Key Passes","Key passes per 90"),
-    ("Passes","Passes per 90"),
-    ("Passing Accuracy %","Accurate passes, %"),
-    ("Passes to Penalty Area","Passes to penalty area per 90"),
-    ("Passes to Penalty Area %","Accurate passes to penalty area, %"),
-    ("Smart Passes","Smart passes per 90"),
-]
 
 # ----------------- RENDER -----------------
-ranked=df_f.sort_values("Score_ALL",ascending=False).head(int(top_n)).copy().reset_index(drop=True)
-
 for idx,row in ranked.iterrows():
     rank = idx+1
     player = str(row.get("Player","")) or ""
@@ -377,7 +299,6 @@ for idx,row in ranked.iterrows():
     if "CF" in codes: codes = ["CF"] + [c for c in codes if c!="CF"]
     chips_html = "".join(f"<span class='pos' style='background:{chip_color(c)}'>{c}</span> " for c in dict.fromkeys(codes))
 
-    # Tile
     st.markdown(f"""
     <div class='wrap'>
       <div class='player-card'>
@@ -408,18 +329,6 @@ for idx,row in ranked.iterrows():
     <div class='divider'></div>
     """, unsafe_allow_html=True)
 
-    # ---- Per-player profile (dropdown) ----
-    with st.expander(f"📊 Profile: {player}", expanded=False):
-        tabs = st.tabs(["Attacking", "Defensive", "Possession"])
-        with tabs[0]:
-            html = f"<div class='metrics-card'><div class='section-h'>ATTACKING</div>{render_section(ATTACKING_SPEC, row)}</div>"
-            st.markdown(html, unsafe_allow_html=True)
-        with tabs[1]:
-            html = f"<div class='metrics-card'><div class='section-h'>DEFENSIVE</div>{render_section(DEFENSIVE_SPEC, row)}</div>"
-            st.markdown(html, unsafe_allow_html=True)
-        with tabs[2]:
-            html = f"<div class='metrics-card'><div class='section-h'>POSSESSION</div>{render_section(POSSESSION_SPEC, row)}</div>"
-            st.markdown(html, unsafe_allow_html=True)
 
 
 
