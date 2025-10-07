@@ -1,5 +1,8 @@
-# app_top20_tiles.py — Top 20 Tiles (CF) with fixed image, colored role tags, proper flags (incl. ENG/SCT/WLS)
-# + per-player dropdown of individual metrics (Attacking / Defensive / Possession)
+# app_top20_tiles.py — Top 20 Tiles (CF) + per-player dropdown
+# - Shows Preferred Foot under contract (blank if missing)
+# - Team line shows "Team · League"
+# - No raw value labels in dropdown
+# - All pills capped visually at 99
 # Requirements: streamlit, pandas, numpy
 
 import io, re, math, unicodedata
@@ -30,7 +33,6 @@ st.markdown("""
   }
   .avatar{ width:96px; height:96px; border-radius:12px; background:#0b0d12 url('https://i.redd.it/43axcjdu59nd1.jpeg') center/cover no-repeat; border:1px solid #2a3145; }
   .leftcol{ display:flex; flex-direction:column; align-items:center; gap:8px; }
-  .meta3{ display:grid; grid-template-columns: repeat(3, auto); gap:8px; align-items:center; }
   .name{ font-weight:800; font-size:22px; color:#e8ecff; margin-bottom:6px; }
   .sub{ color:#a8b3cf; font-size:15px; }
   .pill{ padding:2px 10px; border-radius:9px; font-weight:800; font-size:18px; color:#0b0d12; display:inline-block; min-width:42px; text-align:center; }
@@ -50,7 +52,6 @@ st.markdown("""
   .m-row + .m-row{ margin-top:6px; }
   .m-label{ color:#c9d3f2; font-size:16px; }
   .m-right{ display:flex; align-items:center; gap:8px; }
-  .m-raw{ color:#98a3c7; font-size:12px; }
   .m-badge{ min-width:40px; text-align:center; padding:2px 10px; border-radius:8px; font-weight:800; font-size:18px; color:#0b0d12; border:1px solid rgba(0,0,0,.15); }
   .metrics-grid{ display:grid; grid-template-columns:1fr; gap:12px; }
   @media (min-width: 720px){
@@ -81,7 +82,6 @@ FEATURES = [
     'Accurate crosses, %','Dribbles per 90','Successful dribbles, %','Head goals per 90','Key passes per 90',
     'Touches in box per 90','Progressive runs per 90','Accelerations per 90','Passes per 90','Accurate passes, %',
     'xA per 90','Passes to penalty area per 90','Accurate passes to penalty area, %','Deep completions per 90','Smart passes per 90',
-    # ↓ Added to support the dropdown sections you requested
     'Offensive duels per 90','Offensive duels won, %'
 ]
 ROLES = {
@@ -209,7 +209,7 @@ df_f["Score_ALL"]=(1-beta)*df_f["Score_ALL_raw"]+beta*ls
 
 ranked=df_f.sort_values("Score_ALL",ascending=False).head(int(top_n)).copy().reset_index(drop=True)
 
-# ----------------- Colors -----------------
+# ----------------- Colors & helpers -----------------
 PALETTE=[(0,(208,2,27)),(50,(245,166,35)),(65,(248,231,28)),(75,(126,211,33)),(85,(65,117,5)),(100,(40,90,4))]
 def _lerp(a,b,t): return tuple(int(round(a[i]+(b[i]-a[i])*t)) for i in range(3))
 def rating_color(v:float)->str:
@@ -219,6 +219,13 @@ def rating_color(v:float)->str:
         if v<=x1:
             t=0 if x1==x0 else (v-x0)/(x1-x0); r,g,b=_lerp(c0,c1,t); return f"rgb({r},{g},{b})"
     r,g,b=PALETTE[-1][1]; return f"rgb({r},{g},{b})"
+
+# cap anything shown to max 99
+def show99(x: float) -> int:
+    try:
+        return min(99, int(round(float(x))))
+    except Exception:
+        return 0
 
 POS_COLORS={
     "CF":"#183153","LWF":"#1f3f8c","LW":"#1f3f8c","LAMF":"#1f3f8c","RW":"#1f3f8c","RWF":"#1f3f8c","RAMF":"#1f3f8c",
@@ -260,7 +267,15 @@ def cc_to_twemoji_code(cc: str) -> str | None:
     cp1 = 0x1F1E6 + (ord(a) - ord('A'))
     cp2 = 0x1F1E6 + (ord(b) - ord('A'))
     return f"{cp1:04x}-{cp2:04x}"
-def flag_chip_html(country_name: str, age: int, contract_year: int) -> str:
+
+# Preferred foot getter (handles a few likely column names)
+def get_foot_text(row: pd.Series) -> str:
+    for c in ["Foot","Preferred foot","Preferred Foot"]:
+        if c in row and isinstance(row[c], str) and row[c].strip():
+            return row[c].strip()
+    return ""
+
+def flag_and_meta_html(country_name: str, age: int, contract_year: int, foot_txt: str) -> str:
     n = country_norm(country_name)
     cc = COUNTRY_TO_CC.get(n, "")
     if cc in TWEMOJI_SPECIAL:
@@ -277,7 +292,14 @@ def flag_chip_html(country_name: str, age: int, contract_year: int) -> str:
     age_chip = f"<span class='chip'>{age}y.o.</span>"
     yr = f"{contract_year}" if contract_year > 0 else "—"
     contract_chip = f"<span class='chip'>{yr}</span>"
-    return f"<div class='row'>{flag_html}{age_chip}{contract_chip}</div>"
+    top_row = f"<div class='row'>{flag_html}{age_chip}{contract_chip}</div>"
+    # foot row (blank if not available)
+    if foot_txt:
+        foot_chip = f"<span class='chip'>{foot_txt}</span>"
+        foot_row = f"<div class='row'>{foot_chip}</div>"
+    else:
+        foot_row = "<div class='row'></div>"
+    return top_row + foot_row
 
 # ---------- Helpers for dropdown metrics ----------
 def pct_of_row(row: pd.Series, metric: str) -> float:
@@ -285,26 +307,14 @@ def pct_of_row(row: pd.Series, metric: str) -> float:
     v = float(row[col]) if col in row and not pd.isna(row[col]) else 0.0
     return max(0.0, min(100.0, v))
 
-def val_of_row(row: pd.Series, metric: str) -> tuple[float, str]:
-    """Return (raw_value, pretty_string). Percent metrics get %; per 90 rounded to 2dp."""
-    v = float(row.get(metric, np.nan))
-    if np.isnan(v):
-        return (np.nan, "—")
-    if "%" in metric:
-        return (v, f"{v:.0f}%")
-    else:
-        # per 90 and other rates
-        return (v, f"{v:.2f}")
-
-def metrics_section_html(title: str, items: list[tuple[str, float, str]]) -> str:
+def metrics_section_html(title: str, items: list[tuple[str, float]]) -> str:
     rows = []
-    for lab, pct, raw_txt in items:
-        pct_i = int(round(pct))
+    for lab, pct in items:
+        pct_i = show99(pct)
         rows.append(
             f"<div class='m-row'>"
             f"  <div class='m-label'>{lab}</div>"
-            f"  <div class='m-right'><span class='m-raw'>{raw_txt}</span>"
-            f"  <span class='m-badge' style='background:{rating_color(pct_i)}'>{pct_i}</span></div>"
+            f"  <div class='m-right'><span class='m-badge' style='background:{rating_color(pct_i)}'>{pct_i}</span></div>"
             f"</div>"
         )
     return f"<div class='metric-section'><div class='m-title'>{title}</div>{''.join(rows)}</div>"
@@ -314,15 +324,17 @@ for idx,row in ranked.iterrows():
     rank = idx+1
     player = str(row.get("Player","")) or ""
     team   = str(row.get("Team","")) or ""
+    league = str(row.get("League","")) or ""
     pos_full = str(row.get("Position","")) or ""
     age = int(row.get("Age",0)) if not pd.isna(row.get("Age",np.nan)) else 0
     cy = pd.to_datetime(row.get("Contract expires"), errors="coerce")
     contract_year = int(cy.year) if pd.notna(cy) else 0
     birth_country = str(row.get("Birth country","") or "")
+    foot_txt = get_foot_text(row)
 
-    gt_i = int(round(float(row["Score_GT"])))
-    lu_i = int(round(float(row["Score_LU"])))
-    tm_i = int(round(float(row["Score_TM"])))
+    gt_i = show99(row["Score_GT"])
+    lu_i = show99(row["Score_LU"])
+    tm_i = show99(row["Score_TM"])
     ov_style = f"background:{rating_color(gt_i)};"
     lu_style = f"background:{rating_color(lu_i)};"
     tm_style = f"background:{rating_color(tm_i)};"
@@ -337,7 +349,7 @@ for idx,row in ranked.iterrows():
       <div class='player-card'>
         <div class='leftcol'>
           <div class='avatar'></div>
-          {flag_chip_html(birth_country, age, contract_year)}
+          {flag_and_meta_html(birth_country, age, contract_year, foot_txt)}
         </div>
         <div>
           <div class='name'>{player}</div>
@@ -354,7 +366,7 @@ for idx,row in ranked.iterrows():
             <span class='sub'>Target Man CF</span>
           </div>
           <div class='row'>{chips_html}</div>
-          <div class='teamline'>{team}</div>
+          <div class='teamline'>{team} · {league}</div>
         </div>
         <div class='rank'>#{rank}</div>
       </div>
@@ -364,7 +376,6 @@ for idx,row in ranked.iterrows():
 
     # === dropdown with individual metrics ===
     with st.expander("▼ Show individual metrics"):
-        # Build the three sections using your titles & mappings
         ATTACKING = []
         for lab, met in [
             ("Crosses","Crosses per 90"),
@@ -381,7 +392,7 @@ for idx,row in ranked.iterrows():
             ("Shooting Accuracy %","Shots on target, %"),
             ("Touches in Opposition Box","Touches in box per 90"),
         ]:
-            ATTACKING.append((lab, float(np.nan_to_num(pct_of_row(row, met), nan=0.0)), val_of_row(row, met)[1]))
+            ATTACKING.append((lab, float(np.nan_to_num(pct_of_row(row, met), nan=0.0))))
 
         DEFENSIVE = []
         for lab, met in [
@@ -391,7 +402,7 @@ for idx,row in ranked.iterrows():
             ("Defensive Duel Success %","Defensive duels won, %"),
             ("PAdj. Interceptions","PAdj Interceptions"),
         ]:
-            DEFENSIVE.append((lab, float(np.nan_to_num(pct_of_row(row, met), nan=0.0)), val_of_row(row, met)[1]))
+            DEFENSIVE.append((lab, float(np.nan_to_num(pct_of_row(row, met), nan=0.0))))
 
         POSSESSION = []
         for lab, met in [
@@ -405,9 +416,8 @@ for idx,row in ranked.iterrows():
             ("Passes to Penalty Area %","Accurate passes to penalty area, %"),
             ("Smart Passes","Smart passes per 90"),
         ]:
-            POSSESSION.append((lab, float(np.nan_to_num(pct_of_row(row, met), nan=0.0)), val_of_row(row, met)[1]))
+            POSSESSION.append((lab, float(np.nan_to_num(pct_of_row(row, met), nan=0.0))))
 
-        # lay them out (responsive grid: 3 columns on wide screens)
         col_html = (
             "<div class='metrics-grid'>"
             f"{metrics_section_html('ATTACKING', ATTACKING)}"
@@ -416,6 +426,7 @@ for idx,row in ranked.iterrows():
             "</div>"
         )
         st.markdown(col_html, unsafe_allow_html=True)
+
 
 
 
