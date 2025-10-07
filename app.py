@@ -812,7 +812,7 @@ for idx,row in ranked.iterrows():
             "</div>"
         )
         st.markdown(col_html, unsafe_allow_html=True)
-p completions per 90"),
+            ("Deep completions per 90"),
             ("Dribbles","Dribbles per 90"),
             ("Dribbling Success %","Successful dribbles, %"),
             ("Key Passes","Key passes per 90"),
